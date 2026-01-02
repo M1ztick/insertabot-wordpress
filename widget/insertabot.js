@@ -314,7 +314,7 @@
         </form>
         ${widgetConfig.show_branding
           ? `<div style="text-align: center; margin-top: 8px; font-size: 11px; color: #9ca3af;">
-               Powered by <a href="https://insertabot.com" target="_blank" style="color: ${widgetConfig.primary_color}; text-decoration: none;">Insertabot</a>
+               Powered by <a href="https://insertabot.com" target="_blank" style="color: ${sanitizedConfig.primary_color}; text-decoration: none;">Insertabot</a>
              </div>`
           : ''
         }
@@ -352,11 +352,11 @@
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
       }
       .insertabot-message-user .insertabot-message-content {
-        background: ${widgetConfig.primary_color};
+        background: ${sanitizedConfig.primary_color};
         color: white;
       }
       #insertabot-input:focus {
-        border-color: ${widgetConfig.primary_color};
+        border-color: ${sanitizedConfig.primary_color};
       }
       #insertabot-send:hover:not(:disabled) {
         opacity: 0.9;

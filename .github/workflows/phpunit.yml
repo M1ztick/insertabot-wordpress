@@ -23,7 +23,9 @@ jobs:
       - name: Install dependencies
         run: |
           cd wordpress-plugin/insertabot
-          composer install --no-dev
+          if [ -f composer.json ]; then
+            composer install --no-dev --optimize-autoloader
+          fi
 
       - name: Run PHPUnit
         run: |

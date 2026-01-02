@@ -33,9 +33,14 @@ require_once INSERTABOT_PLUGIN_DIR . 'includes/rest.php';
 require_once INSERTABOT_PLUGIN_DIR . 'includes/privacy.php';
 
 // Load translations
-add_action( 'plugins_loaded', function() {
-    load_plugin_textdomain( 'insertabot', false, dirname( plugin_basename(__FILE__) ) . '/languages' );
-});
+add_action( 'plugins_loaded', 'insertabot_load_textdomain' );
+
+/**
+ * Load plugin text domain for translations
+ */
+function insertabot_load_textdomain() {
+    load_plugin_textdomain( 'insertabot', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
+}
 
 /**
  * Main Insertabot Plugin Class
@@ -113,8 +118,7 @@ class Insertabot_Plugin {
         }
 
         // Use encrypted storage API (do not read the raw value for output)
-        $api_key = 
-            class_exists('\Insertabot_Security') ? \Insertabot_Security::get_api_key() : '';
+        $api_key = class_exists( 'Insertabot_Security' ) ? Insertabot_Security::get_api_key() : '';
         if (empty($api_key)) {
             return;
         }
@@ -161,37 +165,47 @@ function insertabot_init() {
 }
 add_action('plugins_loaded', 'insertabot_init');
 
-// Migrate plaintext API key (if any) to encrypted storage on init
+/**
+ * Migrate plaintext API key (if any) to encrypted storage on init
+ */
 function insertabot_maybe_migrate_plaintext_key() {
-    if (!class_exists('\Insertabot_Security')) {
+    if ( ! class_exists( 'Insertabot_Security' ) ) {
         return;
     }
 
-    $plain = get_option('insertabot_api_key', '');
-    $existing = \Insertabot_Security::get_api_key();
+    $plain = get_option( 'insertabot_api_key', '' );
+    $existing = Insertabot_Security::get_api_key();
 
-    if (is_string($plain) && $plain !== '' && $existing === '') {
-        $validated = \Insertabot_Security::validate_api_key($plain);
-        if (!is_wp_error($validated)) {
-            \Insertabot_Security::store_api_key($plain);
+    if ( is_string( $plain ) && '' !== $plain && '' === $existing ) {
+        $validated = Insertabot_Security::validate_api_key( $plain );
+        if ( ! is_wp_error( $validated ) ) {
+            Insertabot_Security::store_api_key( $plain );
             // Remove plaintext value
-            update_option('insertabot_api_key', '');
+            update_option( 'insertabot_api_key', '' );
         }
     }
 }
 add_action('init', 'insertabot_maybe_migrate_plaintext_key');
 
 // Activation hook
-register_activation_hook(__FILE__, 'insertabot_activate');
+register_activation_hook( __FILE__, 'insertabot_activate' );
+
+/**
+ * Plugin activation callback
+ */
 function insertabot_activate() {
     // Set default options
-    add_option('insertabot_enabled', false);
-    add_option('insertabot_api_key', '');
-    add_option('insertabot_api_base', INSERTABOT_API_URL);
+    add_option( 'insertabot_enabled', false );
+    add_option( 'insertabot_api_key', '' );
+    add_option( 'insertabot_api_base', INSERTABOT_API_URL );
 }
 
 // Deactivation hook
-register_deactivation_hook(__FILE__, 'insertabot_deactivate');
+register_deactivation_hook( __FILE__, 'insertabot_deactivate' );
+
+/**
+ * Plugin deactivation callback
+ */
 function insertabot_deactivate() {
     // Nothing to do on deactivation
 }
