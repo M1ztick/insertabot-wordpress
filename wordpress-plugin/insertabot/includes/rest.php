@@ -19,26 +19,47 @@ add_action('rest_api_init', function () {
  * Returns: { token: string, expires: int }
  */
 function insertabot_widget_token_endpoint(WP_REST_Request $request) {
-    if (!class_exists('Insertabot_Security')) {
-        return new WP_Error('no_security', 'Security helper missing', array('status' => 500));
+    try {
+        if (!class_exists('Insertabot_Security')) {
+            return new WP_Error('no_security', 'Security helper missing', array('status' => 500));
+        }
+
+        $api_key = Insertabot_Security::get_api_key();
+        if (empty($api_key)) {
+            return new WP_Error('no_api_key', 'API key not configured', array('status' => 400));
+        }
+
+        $site = get_site_url();
+        if (empty($site)) {
+            return new WP_Error('no_site_url', 'Site URL not available', array('status' => 500));
+        }
+
+        $expires = time() + 60; // short-lived (60s)
+
+        // Build a token payload that does NOT contain the API key. We'll sign it
+        // with site-specific secret (derived from AUTH_KEY or fallback) so it's
+        // verifiable on the server side if needed.
+        $random = wp_generate_password(12, false, false);
+        if (empty($random)) {
+            return new WP_Error('token_generation_failed', 'Failed to generate random token', array('status' => 500));
+        }
+
+        $payload = $site . '|' . $expires . '|' . $random;
+        $secret = defined('AUTH_KEY') && !empty(AUTH_KEY) ? AUTH_KEY : 'insertabot_fallback_secret';
+        $sig = hash_hmac('sha256', $payload, $secret);
+
+        if ($sig === false) {
+            return new WP_Error('signing_failed', 'Failed to sign token', array('status' => 500));
+        }
+
+        $token = base64_encode($payload . '|' . $sig);
+
+        return rest_ensure_response(array(
+            'token' => $token,
+            'expires' => $expires
+        ));
+    } catch (Exception $e) {
+        error_log('Insertabot widget token generation error: ' . $e->getMessage());
+        return new WP_Error('token_error', 'Token generation failed', array('status' => 500));
     }
-
-    $api_key = Insertabot_Security::get_api_key();
-    if (empty($api_key)) {
-        return new WP_Error('no_api_key', 'API key not configured', array('status' => 400));
-    }
-
-    $site = get_site_url();
-    $expires = time() + 60; // short-lived (60s)
-
-    // Build a token payload that does NOT contain the API key. We'll sign it
-    // with site-specific secret (derived from AUTH_KEY or fallback) so it's
-    // verifiable on the server side if needed.
-    $payload = $site . '|' . $expires . '|' . wp_generate_password(12, false, false);
-    $secret = defined('AUTH_KEY') ? AUTH_KEY : 'insertabot_fallback_secret';
-    $sig = hash_hmac('sha256', $payload, $secret);
-
-    $token = base64_encode($payload . '|' . $sig);
-
-    return rest_ensure_response(array('token' => $token, 'expires' => $expires));
 }

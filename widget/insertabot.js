@@ -78,13 +78,14 @@
       </svg>
     `;
 
+    const safeColor = escapeHtmlAttr(widgetConfig.primary_color || '#3b82f6');
     chatBubble.style.cssText = `
       position: fixed;
       ${widgetConfig.position === 'bottom-left' ? 'left: 24px;' : 'right: 24px;'}
       bottom: 80px;
       width: 60px;
       height: 60px;
-      background: ${widgetConfig.primary_color};
+      background: ${safeColor};
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -142,6 +143,7 @@
     `;
 
     const style = document.createElement('style');
+    const safeColorForStyle = escapeHtmlAttr(widgetConfig.primary_color || '#3b82f6');
     style.textContent = `
       @keyframes insertabot-bounce {
         0%, 100% { transform: translateY(0); }
@@ -154,7 +156,7 @@
       .insertabot-dots {
         width: 6px;
         height: 6px;
-        background: ${widgetConfig.primary_color};
+        background: ${safeColorForStyle};
         border-radius: 50%;
         position: relative;
         animation: insertabot-pulse 1.5s ease-in-out infinite;
@@ -165,7 +167,7 @@
         position: absolute;
         width: 6px;
         height: 6px;
-        background: ${widgetConfig.primary_color};
+        background: ${safeColorForStyle};
         border-radius: 50%;
         top: 0;
       }
@@ -215,9 +217,18 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     `;
 
+    // Sanitize config values to prevent XSS
+    const sanitizedConfig = {
+      primary_color: escapeHtmlAttr(widgetConfig.primary_color || '#3b82f6'),
+      bot_avatar_url: escapeHtmlAttr(widgetConfig.bot_avatar_url || ''),
+      bot_name: escapeHtml(widgetConfig.bot_name || 'Assistant'),
+      greeting_message: escapeHtml(widgetConfig.greeting_message || 'Hello! How can I help you?'),
+      placeholder_text: escapeHtmlAttr(widgetConfig.placeholder_text || 'Type your message...')
+    };
+
     chatContainer.innerHTML = `
       <div id="insertabot-header" style="
-        background: ${widgetConfig.primary_color};
+        background: ${sanitizedConfig.primary_color};
         color: white;
         padding: 16px;
         display: flex;
@@ -225,12 +236,12 @@
         justify-content: space-between;
       ">
         <div style="display: flex; align-items: center; gap: 12px;">
-          ${widgetConfig.bot_avatar_url
-            ? `<img src="${widgetConfig.bot_avatar_url}" alt="${widgetConfig.bot_name}" style="width: 36px; height: 36px; border-radius: 50%; border: 2px solid white;" />`
-            : `<div style="width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-weight: bold;">${widgetConfig.bot_name[0]}</div>`
+          ${sanitizedConfig.bot_avatar_url
+            ? `<img src="${sanitizedConfig.bot_avatar_url}" alt="${sanitizedConfig.bot_name}" style="width: 36px; height: 36px; border-radius: 50%; border: 2px solid white;" />`
+            : `<div style="width: 36px; height: 36px; border-radius: 50%; background: rgba(255,255,255,0.2); display: flex; align-items: center; justify-content: center; font-weight: bold;">${escapeHtml(widgetConfig.bot_name ? widgetConfig.bot_name[0] : 'A')}</div>`
           }
           <div>
-            <div style="font-weight: 600; font-size: 16px;">${widgetConfig.bot_name}</div>
+            <div style="font-weight: 600; font-size: 16px;">${sanitizedConfig.bot_name}</div>
             <div style="font-size: 12px; opacity: 0.9;">Online</div>
           </div>
         </div>
@@ -260,7 +271,7 @@
         background: #f9fafb;
       ">
         <div class="insertabot-message insertabot-message-assistant">
-          <div class="insertabot-message-content">${widgetConfig.greeting_message}</div>
+          <div class="insertabot-message-content">${sanitizedConfig.greeting_message}</div>
         </div>
       </div>
 
@@ -273,7 +284,7 @@
           <input
             type="text"
             id="insertabot-input"
-            placeholder="${widgetConfig.placeholder_text}"
+            placeholder="${sanitizedConfig.placeholder_text}"
             style="
               flex: 1;
               padding: 12px;
@@ -287,7 +298,7 @@
             type="submit"
             id="insertabot-send"
             style="
-              background: ${widgetConfig.primary_color};
+              background: ${sanitizedConfig.primary_color};
               color: white;
               border: none;
               border-radius: 8px;
@@ -533,6 +544,19 @@
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  /**
+   * Escape HTML attribute values
+   */
+  function escapeHtmlAttr(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   /**

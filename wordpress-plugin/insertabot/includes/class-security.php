@@ -325,8 +325,20 @@ class Insertabot_Security {
             $sanitized['bot_name'] = sanitize_text_field($config['bot_name']);
         }
 
+        if (isset($config['bot_avatar_url'])) {
+            // Sanitize URL and validate it's a valid image URL
+            $url = esc_url_raw($config['bot_avatar_url']);
+            if (!empty($url) && filter_var($url, FILTER_VALIDATE_URL)) {
+                $sanitized['bot_avatar_url'] = $url;
+            }
+        }
+
         if (isset($config['greeting_message'])) {
             $sanitized['greeting_message'] = sanitize_textarea_field($config['greeting_message']);
+        }
+
+        if (isset($config['placeholder_text'])) {
+            $sanitized['placeholder_text'] = sanitize_text_field($config['placeholder_text']);
         }
 
         if (isset($config['system_prompt'])) {
