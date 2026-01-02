@@ -1,0 +1,44 @@
+<?php
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+add_action('rest_api_init', function () {
+    register_rest_route('insertabot/v1', '/widget-token', array(
+        'methods' => 'GET',
+        'callback' => 'insertabot_widget_token_endpoint',
+        'permission_callback' => '__return_true',
+    ));
+});
+
+/**
+ * Generate a short-lived, non-reversible token for use by client-side widget bridges.
+ * This token does NOT expose your API key and is only valid for a short time.
+ *
+ * Returns: { token: string, expires: int }
+ */
+function insertabot_widget_token_endpoint(WP_REST_Request $request) {
+    if (!class_exists('Insertabot_Security')) {
+        return new WP_Error('no_security', 'Security helper missing', array('status' => 500));
+    }
+
+    $api_key = Insertabot_Security::get_api_key();
+    if (empty($api_key)) {
+        return new WP_Error('no_api_key', 'API key not configured', array('status' => 400));
+    }
+
+    $site = get_site_url();
+    $expires = time() + 60; // short-lived (60s)
+
+    // Build a token payload that does NOT contain the API key. We'll sign it
+    // with site-specific secret (derived from AUTH_KEY or fallback) so it's
+    // verifiable on the server side if needed.
+    $payload = $site . '|' . $expires . '|' . wp_generate_password(12, false, false);
+    $secret = defined('AUTH_KEY') ? AUTH_KEY : 'insertabot_fallback_secret';
+    $sig = hash_hmac('sha256', $payload, $secret);
+
+    $token = base64_encode($payload . '|' . $sig);
+
+    return rest_ensure_response(array('token' => $token, 'expires' => $expires));
+}

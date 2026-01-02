@@ -1,0 +1,20 @@
+name: PHPUnit
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: [7.4, 8.0, 8.1]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup and run PHPUnit
+        uses: 10up/action-phpunit@v1
+        with:
+          php-version: ${{ matrix.php }}
+          plugin-dir: 'wordpress-plugin/insertabot'

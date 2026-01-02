@@ -1,0 +1,30 @@
+{
+  "name": "insertabot",
+  "version": "1.0.0",
+  "description": "Insertabot - AI-powered chatbot widget for websites",
+  "scripts": {
+    "dev": "node dev-server.js",
+    "dev:port": "node dev-server.js --port",
+    "dev:worker": "cd worker && wrangler dev",
+    "deploy": "wrangler deploy --config worker/wrangler.toml",
+    "test": "node dev-server.js --port 8080",
+    "prepare": "husky install",
+    "lint:secrets": "secretlint --config .secretlintrc.json \"**/*\" --max-warnings 0",
+    "scan:secrets": "npm run lint:secrets"
+  },
+  "keywords": [
+    "chatbot",
+    "ai",
+    "widget",
+    "cloudflare-workers",
+    "customer-support"
+  ],
+  "author": "Mistyk Media",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^4.47.0",
+    "husky": "^8.0.0",
+    "secretlint": "^6.0.0",
+    "@secretlint/secretlint-rule-preset-recommended": "^6.0.0"
+  }
+}

@@ -1,0 +1,5 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Run secret lint before committing. Fails the commit on any detection.
+npm run lint:secrets

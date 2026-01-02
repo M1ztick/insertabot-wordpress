@@ -1,0 +1,16 @@
+# Local development variables (contains secrets!)
+.dev.vars
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.wrangler/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

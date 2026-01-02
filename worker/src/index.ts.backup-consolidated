@@ -1,0 +1,3122 @@
+/**
+ * Insertabot SaaS - Cloudflare Workers API
+ * Multi-tenant chatbot service with AI Gateway integration
+ */
+
+import { getRelevantContext } from "./rag";
+import { StructuredLogger } from "./monitoring";
+import {
+  createCheckoutSession,
+  verifyWebhookSignature,
+  processWebhookEvent,
+  getSubscriptionStatus,
+} from "./stripe";
+import {
+  validateRequest,
+  chatRequestSchema,
+  checkoutRequestSchema,
+  validateApiKey,
+  sanitizeForLog,
+  validateTenant,
+} from "./validation";
+import {
+  createCustomer,
+  getCustomerByEmail,
+  updateWidgetConfig,
+} from "./customer";
+import { getDashboardHTML } from "./html/dashboard";
+import { getSignupHTML } from "./html/signup";
+import {
+  performWebSearch,
+  formatSearchResultsForAI,
+  shouldPerformSearch,
+} from "./search";
+import { extractTextFromMessage } from "./utils";
+
+export interface Env {
+  DB: D1Database;
+  VECTORIZE: VectorizeIndex;
+  RATE_LIMITER: KVNamespace;
+  ANALYTICS: AnalyticsEngineDataset;
+  AI: any; // Cloudflare Workers AI binding
+  ENVIRONMENT: string; // 'development' | 'production'
+  CORS_ORIGINS: string; // comma-separated
+  STRIPE_SECRET_KEY?: string; // Stripe API secret key
+  STRIPE_PUBLISHABLE_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRO_PRICE_ID?: string; // Price ID for Pro plan on Stripe
+  TAVILY_API_KEY?: string; // Tavily Search API key for web search (AI-optimized)
+}
+
+interface ChatMessage {
+  role: "system" | "user" | "assistant";
+  content:
+    | string
+    | Array<{
+        type: "text" | "image_url";
+        text?: string;
+        image_url?: { url: string };
+      }>;
+}
+
+interface ChatRequest {
+  messages: ChatMessage[];
+  stream?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+  model?: string;
+}
+
+interface CustomerConfig {
+  customer_id: string;
+  api_key: string;
+  plan_type: string;
+  status: string;
+  rate_limit_per_hour: number;
+  rate_limit_per_day: number;
+  rag_enabled: boolean;
+}
+
+interface WidgetConfig {
+  primary_color: string;
+  position: string;
+  greeting_message: string;
+  bot_name: string;
+  bot_avatar_url: string | null;
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  system_prompt: string;
+}
+
+// CORS helper - simplified and memoized for performance
+const createCorsHeaders = (allowedOrigins: string[]) => {
+  return (origin: string): HeadersInit => {
+    const isAllowed =
+      allowedOrigins.includes("*") || allowedOrigins.includes(origin);
+    return {
+      "Access-Control-Allow-Origin": isAllowed
+        ? origin
+        : allowedOrigins[0] || "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+      "Access-Control-Max-Age": "86400",
+    };
+  };
+};
+
+// Extract API key from headers
+function getApiKey(request: Request): string | null {
+  const headerKey = request.headers.get("X-API-Key");
+  if (headerKey) return headerKey;
+
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader?.startsWith("Bearer ")) return authHeader.slice(7);
+
+  return null;
+}
+
+// Fetch single record helper to reduce repetition
+async function fetchSingle<T>(
+  db: D1Database,
+  query: string,
+  params: any[]
+): Promise<T | null> {
+  try {
+    const result = await db
+      .prepare(query)
+      .bind(...params)
+      .first<T>();
+    return result || null;
+  } catch (error) {
+    console.error("Database fetch error:", error);
+    return null;
+  }
+}
+
+async function getCustomerConfig(
+  db: D1Database,
+  apiKey: string
+): Promise<CustomerConfig | null> {
+  return fetchSingle<CustomerConfig>(
+    db,
+    `SELECT customer_id, api_key, plan_type, status, rate_limit_per_hour, rate_limit_per_day, rag_enabled
+		 FROM customers WHERE api_key = ? AND status = 'active'`,
+    [apiKey]
+  );
+}
+
+async function getWidgetConfig(
+  db: D1Database,
+  customerId: string
+): Promise<WidgetConfig | null> {
+  return fetchSingle<WidgetConfig>(
+    db,
+    `SELECT primary_color, position, greeting_message, bot_name, bot_avatar_url,
+		        model, temperature, max_tokens, system_prompt
+		 FROM widget_configs WHERE customer_id = ?`,
+    [customerId]
+  );
+}
+
+// Rate limiting with atomic increments using KV's atomic operations if available
+async function checkRateLimit(
+  kv: KVNamespace,
+  customerId: string,
+  limitPerHour: number,
+  limitPerDay: number
+): Promise<{ allowed: boolean; retryAfter?: number }> {
+  const now = Date.now();
+  const hourKey = `ratelimit:${customerId}:hour:${Math.floor(now / 3600000)}`;
+  const dayKey = `ratelimit:${customerId}:day:${Math.floor(now / 86400000)}`;
+
+  // Use atomic increment if supported, else fallback to get/put
+  const increment = async (key: string, ttl: number): Promise<number> => {
+    try {
+      // Get current, increment, put
+      const current = parseInt((await kv.get(key)) || "0");
+      const updated = current + 1;
+      await kv.put(key, updated.toString(), { expirationTtl: ttl });
+      return updated;
+    } catch {
+      // Fallback: get current, increment, put
+      const current = parseInt((await kv.get(key)) || "0");
+      const updated = current + 1;
+      await kv.put(key, updated.toString(), { expirationTtl: ttl });
+      return updated;
+    }
+  };
+
+  const currentHourCount = await increment(hourKey, 3600);
+  const currentDayCount = await increment(dayKey, 86400);
+
+  const allowed =
+    currentHourCount <= limitPerHour && currentDayCount <= limitPerDay;
+
+  if (!allowed) {
+    const retryAfter = currentHourCount > limitPerHour ? 3600 : 86400;
+    return { allowed: false, retryAfter };
+  }
+
+  return { allowed: true };
+}
+
+// Input validation and sanitization
+function validateChatMessage(message: any): string | null {
+  // Handle multimodal content (array with text and images)
+  if (Array.isArray(message)) {
+    // For vision requests, we get an array of content parts
+    const textPart = message.find((part: any) => part.type === "text");
+    if (!textPart || !textPart.text) {
+      // Allow image-only messages with default text
+      return null;
+    }
+    // Validate the text content
+    const trimmed = textPart.text.trim();
+    if (trimmed.length > 10000) {
+      return "Message exceeds maximum length of 10000 characters";
+    }
+    return null;
+  }
+
+  // Handle string content (regular text messages)
+  if (!message || typeof message !== "string") {
+    return "Message must be a non-empty string";
+  }
+
+  const trimmed = message.trim();
+  if (trimmed.length === 0) {
+    return "Message cannot be empty";
+  }
+
+  if (trimmed.length > 10000) {
+    return "Message exceeds maximum length of 10000 characters";
+  }
+
+  // Check for suspicious patterns
+  if (trimmed.toLowerCase().includes("sql") && trimmed.includes(";")) {
+    return "Invalid message content";
+  }
+
+  return null;
+}
+
+// Response validation - ensure coherence
+function isCoherentResponse(content: string): boolean {
+  if (!content || content.length === 0) return false;
+  if (content.length < 10) return false; // Too short
+  if (content.length > 50000) return false; // Too long
+  if (content.toLowerCase() === "[error]") return false;
+  if (content.includes("undefined") || content.includes("null")) return false;
+
+  // Check for repetitive content (incoherence indicator)
+  const words = content.split(/\s+/);
+  const wordCounts = new Map<string, number>();
+  for (const word of words) {
+    wordCounts.set(
+      word.toLowerCase(),
+      (wordCounts.get(word.toLowerCase()) || 0) + 1
+    );
+  }
+
+  const maxRepetition = Math.max(...Array.from(wordCounts.values()));
+  if (maxRepetition > words.length * 0.3) return false; // More than 30% repetition
+
+  return true;
+}
+
+// Generate fallback response when AI fails
+function getFallbackResponse(widgetConfig: WidgetConfig): string {
+  const fallbacks = [
+    `Hi! I'm ${widgetConfig.bot_name}. I'm having a moment of confusion. Could you try asking your question again?`,
+    `I appreciate your message, but I need to reset. Could you rephrase that for me?`,
+    `Sorry, I lost my train of thought. What was your question?`,
+    `My apologies! I didn't process that correctly. Could you try again?`,
+  ];
+  return fallbacks[Math.floor(Math.random() * fallbacks.length)];
+}
+
+// Main chat handler
+async function handleChatRequest(
+  request: Request,
+  env: Env,
+  customerId: string,
+  customerConfig: CustomerConfig,
+  widgetConfig: WidgetConfig
+): Promise<Response> {
+  const logger = new StructuredLogger(
+    "chat-handler",
+    env.ENVIRONMENT,
+    env.ANALYTICS
+  );
+
+  try {
+    const startTime = Date.now();
+    const chatRequest = (await request.json()) as ChatRequest;
+
+    // Validate incoming messages
+    if (!chatRequest.messages || !Array.isArray(chatRequest.messages)) {
+      return new Response(
+        JSON.stringify({ error: "Invalid request: messages array required" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Validate each message
+    const userMessage = chatRequest.messages[chatRequest.messages.length - 1];
+    const validationError = validateChatMessage(userMessage?.content);
+    if (validationError) {
+      return new Response(JSON.stringify({ error: validationError }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Get RAG context if enabled
+    let ragContext = "";
+    if (customerConfig.rag_enabled && env.VECTORIZE) {
+      const contextResults = await getRelevantContext(
+        env,
+        env.DB,
+        customerId,
+        userMessage.content
+      );
+      if (contextResults.length > 0) {
+        ragContext = `\n\nRelevant context:\n${contextResults.join("\n\n")}`;
+      }
+    }
+
+    // Perform web search if query needs current information
+    let searchContext = "";
+    console.log(`[DEBUG] TAVILY_API_KEY present: ${!!env.TAVILY_API_KEY}`);
+    console.log(`[DEBUG] User message: "${userMessage.content}"`);
+
+    const textContent = extractTextFromMessage(userMessage.content);
+    const shouldSearch = shouldPerformSearch(textContent);
+    const query = textContent.substring(0, 100);
+
+    console.log(`[DEBUG] shouldPerformSearch result: ${shouldSearch}`);
+
+    if (env.TAVILY_API_KEY && shouldSearch) {
+      logger.info("Triggering web search", {
+        query: userMessage.content.substring(0, 100),
+        customerId,
+      });
+
+      try {
+        const searchResults = await performWebSearch(
+          userMessage.content,
+          env.TAVILY_API_KEY,
+          5
+        );
+
+        if (searchResults.length > 0) {
+          searchContext = formatSearchResultsForAI(searchResults);
+          logger.info("Web search completed", {
+            resultCount: searchResults.length,
+            customerId,
+          });
+        } else {
+          logger.warn("Web search returned no results", {
+            query: userMessage.content.substring(0, 100),
+            customerId,
+          });
+        }
+      } catch (searchError) {
+        logger.error("Web search failed", {
+          error: String(searchError),
+          query: userMessage.content.substring(0, 100),
+          customerId,
+        });
+        // Continue without search results - don't fail the entire request
+      }
+    }
+
+    // Build messages with system prompt
+    const maxTokens = chatRequest.max_tokens ?? widgetConfig.max_tokens ?? 500;
+
+    const messages: ChatMessage[] = [
+      {
+        role: "system",
+        content: widgetConfig.system_prompt + ragContext + searchContext,
+      },
+      ...chatRequest.messages,
+    ];
+
+    // Call AI model
+    let aiResponse: any;
+    try {
+      // Using Cloudflare Workers AI - upgraded to Llama 3.1 for better quality
+      const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        max_tokens: Math.min(maxTokens, 2000),
+      });
+
+      aiResponse = response;
+    } catch (aiError) {
+      logger.error("AI model error", { error: String(aiError) });
+      // Fallback to basic response
+      return new Response(
+        JSON.stringify({
+          id: `msg-${Date.now()}`,
+          content: getFallbackResponse(widgetConfig),
+          model: widgetConfig.model,
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Validate response coherence
+    const responseText =
+      aiResponse?.result?.response || aiResponse?.response || "";
+
+    if (!isCoherentResponse(responseText)) {
+      logger.warn("Incoherent response detected", {
+        response: responseText.substring(0, 100),
+      });
+      return new Response(
+        JSON.stringify({
+          id: `msg-${Date.now()}`,
+          content: getFallbackResponse(widgetConfig),
+          model: widgetConfig.model,
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    const responseTime = Date.now() - startTime;
+
+    // Log the successful request
+    await logger.info("Chat request processed", {
+      customerId,
+      responseTime,
+      messageLength: userMessage.content.length,
+    });
+
+    return new Response(
+      JSON.stringify({
+        id: `msg-${Date.now()}`,
+        content: responseText,
+        model: widgetConfig.model,
+        usage: {
+          prompt_tokens: messages.reduce(
+            (acc, m) => acc + m.content.split(/\s+/).length,
+            0
+          ),
+          completion_tokens: responseText.split(/\s+/).length,
+          total_tokens:
+            messages.reduce(
+              (acc, m) => acc + m.content.split(/\s+/).length,
+              0
+            ) + responseText.split(/\s+/).length,
+        },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    logger.error("Chat request error", { error: String(error) });
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
+
+// Health check endpoint
+async function handleHealthCheck(env: Env): Promise<Response> {
+  try {
+    // Quick database check
+    const result = await env.DB.prepare("SELECT 1").first();
+    const dbHealthy = !!result;
+
+    return new Response(
+      JSON.stringify({
+        status: dbHealthy ? "healthy" : "degraded",
+        checks: {
+          database: dbHealthy,
+          tavily_configured: !!env.TAVILY_API_KEY,
+          timestamp: new Date().toISOString(),
+        },
+      }),
+      {
+        status: dbHealthy ? 200 : 503,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        status: "unhealthy",
+        error: String(error),
+      }),
+      {
+        status: 503,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+  }
+}
+
+/**
+ * Call Perplexity API
+ */
+async function callCloudflareAI(
+  ai: any,
+  messages: ChatMessage[],
+  model: string,
+  temperature: number,
+  maxTokens: number,
+  stream: boolean
+): Promise<Response> {
+  // Map model names to Cloudflare Workers AI models
+  const modelMap: Record<string, string> = {
+    "llama-3-8b": "@cf/meta/llama-3-8b-instruct",
+    "llama-3-70b": "@cf/meta/llama-3-8b-instruct", // fallback to 8b
+    "llama-3.1-8b": "@cf/meta/llama-3.1-8b-instruct",
+    "llama-3.1-70b": "@cf/meta/llama-3.1-8b-instruct", // fallback to 8b
+    "llama-3.2-vision": "@cf/meta/llama-3.2-11b-vision-instruct", // Vision model for image understanding
+    "llava-1.5": "@cf/llava-hf/llava-1.5-7b-hf", // Alternative vision model
+  };
+
+  const cfModel = modelMap[model] || "@cf/meta/llama-3.1-8b-instruct";
+
+  try {
+    if (stream) {
+      // Streaming response
+      const eventStream = (await ai.run(cfModel, {
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        stream: true,
+      })) as ReadableStream;
+
+      // Transform Cloudflare AI stream to OpenAI-compatible format
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+
+      // Process the stream
+      (async () => {
+        try {
+          const reader = eventStream.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            // Parse the chunk - Cloudflare AI returns Server-Sent Events
+            const text = decoder.decode(value);
+            const lines = text.split("\n");
+
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                const data = line.slice(6);
+                if (data === "[DONE]") continue;
+
+                try {
+                  const parsed = JSON.parse(data);
+                  if (parsed.response) {
+                    const sseData = `data: ${JSON.stringify({
+                      id: "chatcmpl-" + Date.now(),
+                      object: "chat.completion.chunk",
+                      created: Math.floor(Date.now() / 1000),
+                      model: cfModel,
+                      choices: [
+                        {
+                          index: 0,
+                          delta: { content: parsed.response },
+                          finish_reason: null,
+                        },
+                      ],
+                    })}\n\n`;
+                    await writer.write(encoder.encode(sseData));
+                  }
+                } catch (e) {
+                  // Skip malformed JSON
+                }
+              }
+            }
+          }
+          await writer.write(encoder.encode("data: [DONE]\n\n"));
+        } catch (error) {
+          console.error("Stream error:", error);
+        } finally {
+          await writer.close();
+        }
+      })();
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        },
+      });
+    } else {
+      // Non-streaming response
+      const response = await ai.run(cfModel, {
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+      });
+
+      return new Response(
+        JSON.stringify({
+          id: "chatcmpl-" + Date.now(),
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: cfModel,
+          choices: [
+            {
+              index: 0,
+              message: {
+                role: "assistant",
+                content: response.response || "",
+              },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+          },
+        }),
+        {
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+  } catch (error) {
+    console.error("Cloudflare AI error:", error);
+    throw error;
+  }
+}
+
+// Main request handler
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const url = new URL(request.url);
+    const origin = request.headers.get("origin") || "*";
+    const corsHeaders = createCorsHeaders(env.CORS_ORIGINS.split(","))(origin);
+
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders,
+      });
+    }
+
+    // Public routes that don't require API key
+    const publicRoutes = [
+      "/",
+      "/health",
+      "/playground",
+      "/favicon.ico",
+      "/signup",
+      "/dashboard",
+      "/api/customer/create"
+    ];
+    const isPublicRoute = publicRoutes.includes(url.pathname) ||
+                         url.pathname.startsWith("/v1/stripe/");
+
+    // Tenant context validation for protected routes
+    let apiKey: string | null = null;
+    let customerId: string | null = null;
+    let customerConfig: CustomerConfig | null = null;
+
+    if (!isPublicRoute) {
+      apiKey = request.headers.get("X-API-Key");
+      if (!apiKey) {
+        return new Response("Missing API key", { status: 401 });
+      }
+
+      try {
+        customerId = await validateTenant(env.DB, apiKey);
+      } catch (error) {
+        return new Response(JSON.stringify({ error: 'Invalid API key' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      customerConfig = await getCustomerConfig(env.DB, apiKey);
+
+      if (!customerConfig) {
+        return new Response(JSON.stringify({ error: 'Invalid customer configuration' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    try {
+      // Playground - Full-screen chatbot interface
+      if (url.pathname === "/playground" && request.method === "GET") {
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insertabot Playground - Chat with AI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; overflow: hidden; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1a1f3a 100%);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .playground-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            max-width: 900px;
+            margin: 0 auto;
+            width: 100%;
+            background: #1e293b;
+            box-shadow: 0 0 40px rgba(0,0,0,0.4);
+        }
+
+        .playground-header {
+            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+            color: white;
+            padding: 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+        }
+
+        .header-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .header-title h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .header-title p {
+            font-size: 13px;
+            opacity: 0.9;
+            margin: 4px 0 0 0;
+        }
+
+        .quota-badge {
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .quota-bar {
+            width: 120px;
+            height: 6px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .quota-fill {
+            height: 100%;
+            background: rgba(255,255,255,0.9);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            background: linear-gradient(to bottom, #1e293b, #0f172a);
+        }
+
+        .message {
+            display: flex;
+            gap: 12px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .message.assistant .message-bubble {
+            background: #334155;
+            color: #e2e8f0;
+            border-radius: 12px 12px 12px 4px;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: white;
+            border-radius: 12px 12px 4px 12px;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #94a3b8;
+            animation: bounce 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes bounce {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+
+        .input-area {
+            padding: 20px 24px;
+            background: #0f172a;
+            border-top: 2px solid #334155;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-form {
+            display: flex;
+            gap: 12px;
+            width: 100%;
+            align-items: flex-end;
+        }
+
+        .input-field {
+            flex: 1;
+            padding: 14px 16px;
+            border: 2px solid #334155;
+            border-radius: 12px;
+            font-size: 15px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+
+        .input-field:focus {
+            border-color: #6366f1;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: white;
+            border: none;
+            padding: 14px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            min-width: 80px;
+        }
+
+        .send-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .upgrade-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .upgrade-modal.show {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .upgrade-content {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 440px;
+            box-shadow: 0 25px 75px rgba(0, 0, 0, 0.25);
+            animation: slideUp 0.3s ease-out;
+            text-align: center;
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .upgrade-icon {
+            width: 64px;
+            height: 64px;
+            margin: 0 auto 20px;
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .upgrade-content h2 {
+            font-size: 28px;
+            color: #111827;
+            font-weight: 700;
+            margin: 0 0 12px 0;
+        }
+
+        .upgrade-content p {
+            color: #6b7280;
+            font-size: 17px;
+            line-height: 1.6;
+            margin: 0 0 28px 0;
+        }
+
+        .upgrade-buttons {
+            display: flex;
+            gap: 12px;
+            flex-direction: column;
+        }
+
+        .upgrade-btn {
+            padding: 16px 28px;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: block;
+        }
+
+        .upgrade-btn-primary {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: white;
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+        }
+
+        .upgrade-btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
+        }
+
+        .upgrade-btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+            border: 2px solid #e5e7eb;
+        }
+
+        .upgrade-btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .upgrade-note {
+            font-size: 13px;
+            color: #9ca3af;
+            margin: 24px 0 0 0;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h3 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #cbd5e1;
+            margin: 0 0 8px 0;
+        }
+
+        .empty-state p {
+            color: #64748b;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        @media (max-width: 768px) {
+            .playground-container {
+                max-width: 100%;
+                border-radius: 0;
+            }
+
+            .message-bubble {
+                max-width: 85%;
+            }
+
+            .upgrade-content {
+                margin: 20px;
+                padding: 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="playground-container">
+        <div class="playground-header">
+            <div class="header-info">
+                <div class="header-title">
+                    <h1>Insertabot Playground</h1>
+                    <p>Chat with AI, test unlimited ideas</p>
+                </div>
+            </div>
+            <div class="quota-badge">
+                <span id="quota-text">50/50</span>
+                <div class="quota-bar">
+                    <div class="quota-fill" id="quota-fill" style="width: 100%"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="messages-area" id="messages"></div>
+
+        <div class="input-area">
+            <form class="input-form" id="chat-form">
+                <input
+                    type="text"
+                    id="user-input"
+                    class="input-field"
+                    placeholder="Ask me anything..."
+                    autocomplete="off"
+                />
+                <button type="submit" class="send-btn" id="send-btn">Send</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="upgrade-modal" id="upgrade-modal">
+        <div class="upgrade-content">
+            <div class="upgrade-icon">
+                <svg width="32" height="32" fill="white" viewBox="0 0 24 24">
+                    <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+            </div>
+            <h2>Daily Limit Reached</h2>
+            <p>You've used all <strong>50 free messages</strong> today.<br>Upgrade to Pro for unlimited playground chats.</p>
+            <div class="upgrade-buttons">
+                <a href="/?pricing=true" class="upgrade-btn upgrade-btn-primary">⚡ Upgrade to Pro — \$9.99/mo</a>
+                <button onclick="document.getElementById('upgrade-modal').classList.remove('show')" class="upgrade-btn upgrade-btn-secondary">Continue Tomorrow</button>
+            </div>
+            <p class="upgrade-note">Resets at midnight in your local timezone</p>
+        </div>
+    </div>
+
+    <script>
+        const API_ENDPOINT = '${url.origin}/v1/chat/completions';
+        const API_KEY = 'ib_sk_demo_12345678901234567890123456789012';
+        const QUOTA_MAX = 50;
+        const STORAGE_KEY = 'playground_quota';
+
+        let conversationHistory = [];
+        let quotaUsed = 0;
+        let isProcessing = false;
+
+        // Initialize
+        function initPlayground() {
+            loadQuota();
+            updateQuotaDisplay();
+
+            const messagesDiv = document.getElementById('messages');
+            if (messagesDiv.children.length === 0) {
+                showEmptyState();
+            }
+
+            document.getElementById('chat-form').addEventListener('submit', handleSendMessage);
+            document.getElementById('user-input').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSendMessage(e);
+                }
+            });
+        }
+
+        function showEmptyState() {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.innerHTML = \`
+                <div class="empty-state">
+                    <div class="empty-state-icon">💬</div>
+                    <h3>Welcome to Insertabot</h3>
+                    <p>Start a conversation by typing a message below</p>
+                </div>
+            \`;
+        }
+
+        function loadQuota() {
+            const today = new Date().toDateString();
+            const stored = localStorage.getItem(STORAGE_KEY);
+
+            if (stored) {
+                const data = JSON.parse(stored);
+                if (data.date === today) {
+                    quotaUsed = data.used;
+                    return;
+                }
+            }
+
+            quotaUsed = 0;
+            saveQuota();
+        }
+
+        function saveQuota() {
+            const today = new Date().toDateString();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                date: today,
+                used: quotaUsed
+            }));
+        }
+
+        function updateQuotaDisplay() {
+            const remaining = QUOTA_MAX - quotaUsed;
+            document.getElementById('quota-text').textContent = \`\${remaining}/50\`;
+            const percentUsed = (quotaUsed / QUOTA_MAX) * 100;
+            document.getElementById('quota-fill').style.width = \`\${100 - percentUsed}%\`;
+        }
+
+        function hasReachedQuota() {
+            return quotaUsed >= QUOTA_MAX;
+        }
+
+        async function handleSendMessage(e) {
+            e.preventDefault();
+
+            if (isProcessing) return;
+
+            const input = document.getElementById('user-input');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            if (hasReachedQuota()) {
+                showUpgradeModal();
+                return;
+            }
+
+            input.value = '';
+            input.disabled = true;
+            document.getElementById('send-btn').disabled = true;
+            isProcessing = true;
+
+            // Clear empty state if this is the first message
+            const messagesDiv = document.getElementById('messages');
+            if (messagesDiv.querySelector('.empty-state')) {
+                messagesDiv.innerHTML = '';
+            }
+
+            // Add user message
+            addMessage('user', message);
+            conversationHistory.push({ role: 'user', content: message });
+
+            // Add typing indicator
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.innerHTML = \`
+                <div class="message-bubble typing-indicator">
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                </div>
+            \`;
+            messagesDiv.appendChild(typingDiv);
+            scrollToBottom();
+
+            try {
+                // Prepare system message for demo
+                const systemMessage = {
+                    role: 'system',
+                    content: 'You are a helpful, friendly AI assistant. Answer questions directly and concisely. Be conversational and genuinely helpful. Keep responses under 200 words unless more detail is needed.'
+                };
+
+                const messagesToSend = [systemMessage, ...conversationHistory];
+
+                const response = await fetch(API_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': API_KEY
+                    },
+                    body: JSON.stringify({
+                        messages: messagesToSend,
+                        stream: true,
+                        temperature: 0.7,
+                        max_tokens: 500
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('API request failed');
+                }
+
+                // Remove typing indicator
+                typingDiv.remove();
+
+                // Stream response
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let accumulatedText = '';
+                let messageDiv = null;
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            if (data === '[DONE]') continue;
+
+                            try {
+                                const parsed = JSON.parse(data);
+                                const token = parsed.choices?.[0]?.delta?.content;
+
+                                if (token) {
+                                    accumulatedText += token;
+
+                                    if (!messageDiv) {
+                                        messageDiv = addMessage('assistant', token);
+                                    } else {
+                                        messageDiv.querySelector('.message-bubble').textContent = accumulatedText;
+                                    }
+
+                                    scrollToBottom();
+                                }
+                            } catch (e) {
+                                // Skip malformed JSON
+                            }
+                        }
+                    }
+                }
+
+                conversationHistory.push({ role: 'assistant', content: accumulatedText });
+
+                // Update quota
+                quotaUsed++;
+                saveQuota();
+                updateQuotaDisplay();
+
+                // Check if quota reached
+                if (hasReachedQuota()) {
+                    setTimeout(showUpgradeModal, 800);
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('assistant', '⚠️ Sorry, something went wrong. Please try again.');
+            } finally {
+                input.disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                isProcessing = false;
+                input.focus();
+            }
+        }
+
+        function addMessage(role, content) {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = \`message \${role}\`;
+
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = content;
+
+            messageDiv.appendChild(bubble);
+            messagesDiv.appendChild(messageDiv);
+
+            return messageDiv;
+        }
+
+        function scrollToBottom() {
+            const messagesDiv = document.getElementById('messages');
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function showUpgradeModal() {
+            document.getElementById('upgrade-modal').classList.add('show');
+        }
+
+        // Initialize on load
+        initPlayground();
+    </script>
+</body>
+</html>`;
+
+        return new Response(html, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Cache-Control": "public, max-age=3600",
+          },
+        });
+      }
+
+      // Landing page
+      if (url.pathname === "/") {
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>Insertabot by Mistyk Media - AI Chatbot Platform for Every Brand</title>
+    <meta name="description" content="Deploy white-label AI chatbots powered by Perplexity AI. No code required. Multi-tenant SaaS platform.">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html {
+            scroll-behavior: smooth;
+            overflow-x: hidden;
+            width: 100%;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0e1a;
+            color: #e2e8f0;
+            line-height: 1.6;
+            overflow-x: hidden;
+            width: 100%;
+            position: relative;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            width: 100%;
+        }
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 60px;
+        }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            font-weight: 800;
+            color: #f1f5f9;
+        }
+        .logo img {
+            height: 48px;
+            width: auto;
+            filter: drop-shadow(0 0 8px rgba(168, 85, 247, 0.4));
+            transition: filter 0.3s ease;
+        }
+        .logo:hover img {
+            filter: drop-shadow(0 0 16px rgba(168, 85, 247, 0.6));
+        }
+        .logo span {
+            background: linear-gradient(135deg, #60a5fa, #a78bfa, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 24px;
+            letter-spacing: -0.5px;
+            font-weight: 900;
+        }
+        nav a { color: #94a3b8; text-decoration: none; font-size: 14px; margin: 0 20px; transition: color 0.2s; }
+        nav a:hover { color: #818cf8; }
+        .hero {
+            text-align: center;
+            margin-bottom: 100px;
+            padding: 60px 20px;
+        }
+        .hero h1 {
+            font-size: clamp(32px, 8vw, 56px);
+            font-weight: 800;
+            margin-bottom: 20px;
+            line-height: 1.2;
+        }
+        .hero h1 .highlight { background: linear-gradient(135deg, #60a5fa, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .hero-subtitle {
+            font-size: clamp(16px, 4vw, 20px);
+            color: #94a3b8;
+            margin-bottom: 30px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 50px;
+        }
+        .btn {
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+            color: white;
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(129, 140, 248, 0.4);
+        }
+        .btn-secondary {
+            background: #334155;
+            color: #e2e8f0;
+            border: 1px solid #475569;
+        }
+        .btn-secondary:hover {
+            background: #475569;
+            border-color: #64748b;
+        }
+        .demo-section {
+            text-align: center;
+            margin-bottom: 100px;
+            padding: 40px 20px;
+            background: rgba(30, 41, 59, 0.5);
+            border: 1px solid #334155;
+            border-radius: 16px;
+        }
+        .demo-section h2 { font-size: 32px; margin-bottom: 20px; }
+        .demo-note { color: #94a3b8; margin-bottom: 30px; }
+        .section { margin-bottom: 80px; }
+        .section h2 { font-size: 40px; font-weight: 800; margin-bottom: 50px; text-align: center; }
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 30px;
+        }
+        .feature-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.8));
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 32px;
+            transition: all 0.3s;
+        }
+        .feature-card:hover {
+            border-color: #818cf8;
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(129, 140, 248, 0.15);
+        }
+        .feature-icon { font-size: 40px; margin-bottom: 16px; }
+        .feature-card h3 { font-size: 20px; margin-bottom: 12px; color: #f1f5f9; }
+        .feature-card p { font-size: 14px; color: #cbd5e1; line-height: 1.6; }
+        .usecases {
+            background: rgba(30, 41, 59, 0.3);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 50px;
+            margin-bottom: 80px;
+        }
+        .usecases h2 { text-align: center; margin-bottom: 40px; }
+        .usecase-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 24px;
+        }
+        .usecase-item {
+            padding: 24px;
+            background: rgba(15, 23, 42, 0.5);
+            border-left: 3px solid #818cf8;
+            border-radius: 8px;
+        }
+        .usecase-item h3 { font-size: 18px; margin-bottom: 8px; }
+        .usecase-item p { font-size: 14px; color: #94a3b8; }
+        .tech-section { text-align: center; margin-bottom: 80px; }
+        .tech-stack {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            flex-wrap: wrap;
+            margin-top: 40px;
+        }
+        .tech-item {
+            padding: 16px 24px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .tech-item .label { color: #94a3b8; font-size: 12px; margin-bottom: 4px; }
+        .tech-item .value { color: #818cf8; }
+        .docs-section {
+            background: linear-gradient(135deg, #818cf8, #c084fc);
+            border-radius: 16px;
+            padding: 50px;
+            text-align: center;
+            color: white;
+            margin-bottom: 80px;
+        }
+        .docs-section h2 { color: white; margin-bottom: 20px; }
+        .docs-section p { font-size: 18px; margin-bottom: 30px; color: rgba(255, 255, 255, 0.9); }
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 30px;
+        }
+        .doc-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .doc-card a { color: white; font-weight: 600; text-decoration: none; }
+        .doc-card a:hover { text-decoration: underline; }
+        footer {
+            border-top: 1px solid #334155;
+            padding: 40px 0;
+            text-align: center;
+            color: #64748b;
+            font-size: 14px;
+        }
+        footer a { color: #818cf8; }
+        @media (max-width: 768px) {
+            body { overflow-x: hidden; }
+            .container { padding: 0 16px; max-width: 100%; overflow-x: hidden; }
+            nav { flex-direction: column; gap: 16px; padding: 16px 0; }
+            nav > div { flex-wrap: wrap; justify-content: center; }
+            .logo { font-size: 18px; gap: 10px; }
+            .logo img {
+                height: 36px;
+                filter: drop-shadow(0 0 6px rgba(168, 85, 247, 0.4));
+            }
+            .logo:hover img {
+                filter: drop-shadow(0 0 12px rgba(168, 85, 247, 0.5));
+            }
+            .logo span { font-size: 18px; }
+            .hero { padding: 40px 16px; margin-bottom: 60px; }
+            .hero h1 { font-size: 28px; }
+            .hero-subtitle { font-size: 16px; }
+            .section { margin-bottom: 60px; }
+            .section h2 { font-size: clamp(24px, 6vw, 40px); margin-bottom: 32px; }
+            .features-grid { grid-template-columns: 1fr; gap: 20px; }
+            .feature-card { padding: 24px; }
+            .cta-buttons { flex-direction: column; width: 100%; }
+            .btn { width: 100%; text-align: center; }
+            .demo-section { padding: 32px 16px; margin-bottom: 60px; }
+            .demo-section h2 { font-size: 24px; }
+            .usecases { padding: 24px 16px; }
+            .usecase-list { grid-template-columns: 1fr; }
+            .tech-stack { gap: 16px; }
+            .tech-item { font-size: 13px; padding: 12px 16px; }
+            .docs-section { padding: 32px 16px; }
+            .docs-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Navigation -->
+        <nav>
+            <a href="#" class="logo">
+                <img src="/logo.png" alt="Insertabot Logo">
+                <span>Insertabot by Mistyk Media</span>
+            </a>
+            <div style="display: flex; gap: 20px;">
+                <a href="#features">Features</a>
+                <a href="#usecases">Use Cases</a>
+            </div>
+        </nav>
+
+        <!-- Hero Section -->
+        <div class="hero">
+            <h1>Add AI Chat to<br><span class="highlight">Your Website in 5 Minutes</span></h1>
+            <p class="hero-subtitle">Embed a customizable AI chatbot on your website. No coding required. Start with 20 free messages per day, upgrade anytime for unlimited conversations.</p>
+
+            <div class="cta-buttons">
+                <a href="/signup" class="btn btn-primary">🚀 Start Free Trial</a>
+                <a href="/playground" class="btn btn-secondary">Try Demo</a>
+            </div>
+        </div>
+
+        <!-- Live Demo Section -->
+        <div class="demo-section" id="demo-widget">
+            <h2>See It In Action</h2>
+            <p class="demo-note">💬 Open the chat widget in the bottom-right corner to test the AI in real-time</p>
+        </div>
+
+        <!-- Features Section -->
+        <section class="section" id="features">
+            <h2>Why People Love It</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Lightning Fast</h3>
+                    <p>Answers appear in seconds. No waiting, no lag. Just instant clarity.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🧠</div>
+                    <h3>Actually Smart</h3>
+                    <p>Understands context, nuance, and complex questions. Powered by real-time web search for up-to-date answers.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🌍</div>
+                    <h3>Works Everywhere</h3>
+                    <p>Phone, tablet, desktop—always available and fast, wherever you are.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
+                    <h3>Always Relevant</h3>
+                    <p>Ask follow-up questions and refine your requests. Remembers context.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Your Privacy Matters</h3>
+                    <p>Your conversations are yours. No tracking, no ads, no selling your data.</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon">🎨</div>
+                    <h3>Feels Natural</h3>
+                    <p>Conversational, friendly, and designed to feel like chatting with a helpful person.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Use Cases -->
+        <section class="usecases" id="usecases">
+            <h2>Use It For Anything</h2>
+            <div class="usecase-list">
+                <div class="usecase-item">
+                    <h3>✍️ Writing & Brainstorming</h3>
+                    <p>Overcome writer's block. Generate ideas, outlines, and drafts in seconds.</p>
+                </div>
+                <div class="usecase-item">
+                    <h3>📚 Learning & Homework</h3>
+                    <p>Get explanations for complex topics. Ask follow-ups until you understand.</p>
+                </div>
+                <div class="usecase-item">
+                    <h3>💡 Quick Research</h3>
+                    <p>Summarize articles, compare options, get facts fast. No scrolling rabbit holes.</p>
+                </div>
+                <div class="usecase-item">
+                    <h3>💬 Creative Conversations</h3>
+                    <p>Bounce ideas, get feedback, explore "what if" scenarios with a thoughtful AI.</p>
+                </div>
+                <div class="usecase-item">
+                    <h3>🛠️ Problem Solving</h3>
+                    <p>Debug code, fix bugs, troubleshoot issues. Step-by-step guidance.</p>
+                </div>
+                <div class="usecase-item">
+                    <h3>⚙️ Get Stuff Done</h3>
+                    <p>Draft emails, plan projects, organize thoughts. Your personal productivity partner.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing Section -->
+        <section style="margin-bottom: 100px;" id="pricing">
+            <h2 style="text-align: center; font-size: 40px; font-weight: 800; margin-bottom: 50px;">Simple, Honest Pricing</h2>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 30px; margin-bottom: 40px;">
+                <!-- Free Tier -->
+                <div style="background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 32px; text-align: center;">
+                    <h3 style="font-size: 24px; margin-bottom: 16px; color: #f1f5f9;">Free</h3>
+                    <p style="font-size: 14px; color: #94a3b8; margin-bottom: 24px;">Perfect for trying it out</p>
+                    <div style="font-size: 32px; font-weight: 800; color: #818cf8; margin-bottom: 24px;">$0<span style="font-size: 16px;">/mo</span></div>
+                    <ul style="list-style: none; text-align: left; margin: 24px 0; font-size: 14px; color: #cbd5e1;">
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ 20 messages/day (playground + embed combined)</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ Full AI capabilities</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ Works on all devices</li>
+                        <li style="padding: 8px 0;">✓ No credit card required</li>
+                    </ul>
+                    <a href="/signup" class="btn btn-primary" style="width: 100%; margin-top: 24px; text-align: center;">Get Started</a>
+                </div>
+
+                <!-- Pro Tier -->
+                <div style="background: linear-gradient(135deg, rgba(129, 140, 248, 0.1), rgba(192, 132, 252, 0.1)); border: 2px solid #818cf8; border-radius: 12px; padding: 32px; text-align: center; position: relative; transform: scale(1.05);">
+                    <div style="position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: linear-gradient(135deg, #818cf8, #c084fc); color: white; padding: 4px 16px; border-radius: 20px; font-size: 12px; font-weight: 600;">Most Popular</div>
+                    <h3 style="font-size: 24px; margin-bottom: 16px; color: #f1f5f9; margin-top: 16px;">Pro</h3>
+                    <p style="font-size: 14px; color: #94a3b8; margin-bottom: 24px;">For power users</p>
+                    <div style="font-size: 32px; font-weight: 800; background: linear-gradient(135deg, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 24px;">$9.99<span style="font-size: 16px; color: #94a3b8;">/mo</span></div>
+                    <ul style="list-style: none; text-align: left; margin: 24px 0; font-size: 14px; color: #cbd5e1;">
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ <strong>Unlimited</strong> playground messages</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ <strong>500</strong> embedded messages/month</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ Priority AI responses</li>
+                        <li style="padding: 8px 0;">✓ Download conversation history</li>
+                    </ul>
+                    <button class="btn btn-primary" style="width: 100%; margin-top: 24px; background: linear-gradient(135deg, #818cf8, #c084fc);" onclick="handleProUpgrade(event)">Upgrade to Pro</button>
+                </div>
+
+                <!-- Enterprise Tier -->
+                <div style="background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 32px; text-align: center; position: relative; opacity: 0.6;">
+                    <h3 style="font-size: 24px; margin-bottom: 16px; color: #f1f5f9;">Enterprise</h3>
+                    <p style="font-size: 14px; color: #94a3b8; margin-bottom: 24px;">For teams & businesses</p>
+                    <div style="font-size: 32px; font-weight: 800; color: #818cf8; margin-bottom: 24px;">Custom</div>
+                    <ul style="list-style: none; text-align: left; margin: 24px 0; font-size: 14px; color: #cbd5e1;">
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ <strong>Unlimited</strong> everything</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ Advanced analytics dashboard</li>
+                        <li style="padding: 8px 0; border-bottom: 1px solid #334155;">✓ White-label branding</li>
+                    <!-- Coming Soon Caution Tape -->
+                    <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px;">
+                        <div style="
+                            transform: rotate(-45deg);
+                            background: repeating-linear-gradient(
+                                90deg,
+                                #fbbf24,
+                                #fbbf24 10px,
+                                #000 10px,
+                                #000 20px
+                            );
+                            padding: 16px 60px;
+                            font-size: 20px;
+                            font-weight: 900;
+                            color: #000;
+                            letter-spacing: 2px;
+                            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+                            white-space: nowrap;
+                        ">
+                            COMING SOON
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <p style="text-align: center; color: #94a3b8; font-size: 14px;">All plans include full access to Insertabot. Cancel anytime. No hidden fees.</p>
+        </section>
+
+        <!-- CTA Section -->
+        <section class="docs-section" id="cta">
+            <h2>Start Chatting in Seconds</h2>
+            <p>No signup needed. No credit card. Just click below and start asking questions.</p>
+            <button class="btn btn-primary" style="margin-top: 24px; padding: 18px 48px; font-size: 18px;" onclick="document.querySelector('#demo-widget')?.scrollIntoView({behavior: 'smooth'})">
+                Try It Now
+            </button>
+        </section>
+
+        <!-- Logo Section -->
+        <section style="text-align: center; padding: 60px 20px; margin-bottom: 40px;">
+            <img src="/logo.png" alt="Insertabot Logo" style="max-width: 400px; height: auto; filter: drop-shadow(0 0 20px rgba(168, 85, 247, 0.5));">
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <p style="margin-bottom: 20px;">© 2025 Insertabot. Your AI assistant, always available.</p>
+            <div style="display: flex; justify-content: center; gap: 30px; flex-wrap: wrap; font-size: 14px;">
+                <a href="#">Privacy Policy</a>
+                <a href="#">Terms of Service</a>
+                <a href="#">Contact Us</a>
+                <a href="#">Status</a>
+            </div>
+        </footer>
+    </div>
+
+    <!-- LIVE DEMO Widget with Message Counter & Subscription Support -->
+    <script data-api-key="ib_sk_demo_12345678901234567890123456789012">
+    (function() {
+        'use strict';
+
+        // Configuration & State Management
+        const InsertabotCore = {
+            scriptRef: document.currentScript,
+            credentials: {
+                key: document.currentScript?.getAttribute("data-api-key") || "ib_sk_demo_12345678901234567890123456789012",
+                endpoint: document.currentScript?.getAttribute("data-api-base") || "${url.origin}"
+            },
+            quotas: {
+                freeTierMax: 50,
+                storageIdentifier: 'ib_usage_tracker'
+            },
+            state: {
+                widgetConfig: null,
+                isWidgetVisible: false,
+                conversationHistory: [],
+                processingRequest: false,
+                userQuota: { consumed: 0, resetDate: null },
+                requestAbortSignal: null,
+                subscriptionTier: 'free'
+            },
+            ui: {
+                launcher: null,
+                chatFrame: null,
+                messageContainer: null,
+                inputField: null,
+                submitForm: null
+            }
+        };
+
+        if (!InsertabotCore.credentials.key) {
+            console.error("[Insertabot] Authentication key not provided");
+            return;
+        }
+
+        // Quota Management System
+        const QuotaManager = {
+            retrieveUsageData() {
+                const cached = localStorage.getItem(InsertabotCore.quotas.storageIdentifier);
+                if (!cached) return this.resetQuota();
+
+                const parsedData = JSON.parse(cached);
+                const currentDate = new Date().toDateString();
+
+                if (parsedData.resetDate !== currentDate) {
+                    return this.resetQuota();
+                }
+                return parsedData;
+            },
+
+            resetQuota() {
+                const freshQuota = { consumed: 0, resetDate: new Date().toDateString() };
+                localStorage.setItem(InsertabotCore.quotas.storageIdentifier, JSON.stringify(freshQuota));
+                return freshQuota;
+            },
+
+            recordUsage() {
+                const usage = this.retrieveUsageData();
+                usage.consumed++;
+                localStorage.setItem(InsertabotCore.quotas.storageIdentifier, JSON.stringify(usage));
+                return usage.consumed;
+            },
+
+            hasReachedLimit() {
+                const usage = this.retrieveUsageData();
+                return usage.consumed >= InsertabotCore.quotas.freeTierMax;
+            }
+        };
+
+        // Upgrade Prompt System
+        const UpgradePrompt = {
+            display() {
+                const overlay = document.createElement('div');
+                overlay.setAttribute('role', 'dialog');
+                overlay.setAttribute('aria-modal', 'true');
+                overlay.style.cssText = \`
+                    position:fixed;inset:0;background:rgba(0,0,0,0.6);
+                    display:flex;align-items:center;justify-content:center;
+                    z-index:10000000;font-family:system-ui,-apple-system,sans-serif;
+                    animation:fadeIn 0.2s ease-out
+                \`;
+
+                overlay.innerHTML = \`
+                    <div style="background:#ffffff;border-radius:20px;padding:40px;max-width:440px;
+                                box-shadow:0 25px 75px rgba(0,0,0,0.25);text-align:center;
+                                animation:slideUp 0.3s ease-out">
+                        <div style="width:64px;height:64px;margin:0 auto 20px;background:linear-gradient(135deg,#f59e0b,#ef4444);
+                                    border-radius:50%;display:flex;align-items:center;justify-content:center">
+                            <svg width="32" height="32" fill="white" viewBox="0 0 24 24">
+                                <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                        </div>
+                        <h2 style="margin:0 0 12px;font-size:28px;color:#111827;font-weight:700">
+                            Daily Limit Reached
+                        </h2>
+                        <p style="margin:0 0 28px;color:#6b7280;font-size:17px;line-height:1.6">
+                            You've used all <strong>50 free messages</strong> today.<br>
+                            Upgrade to Pro for unlimited playground chats + 500 embedded messages/month.
+                        </p>
+                        <div style="display:flex;gap:12px;flex-direction:column">
+                            <a href="#pricing"
+                               style="display:block;background:linear-gradient(135deg,#6366f1,#a855f7);
+                                      color:white;padding:16px 28px;border-radius:12px;
+                                      text-decoration:none;font-weight:700;font-size:16px;
+                                      box-shadow:0 4px 14px rgba(99,102,241,0.4);
+                                      transition:transform 0.2s,box-shadow 0.2s"
+                               onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 20px rgba(99,102,241,0.5)'"
+                               onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(99,102,241,0.4)'"
+                               onclick="this.closest('[role=dialog]').remove();document.querySelector('#pricing')?.scrollIntoView({behavior:'smooth'})">
+                                ⚡ Upgrade to Pro — $9.99/mo
+                            </a>
+                            <button onclick="this.closest('[role=dialog]').remove()"
+                                    style="background:#f3f4f6;color:#374151;padding:14px 28px;
+                                           border:2px solid #e5e7eb;border-radius:12px;font-weight:600;
+                                           font-size:15px;cursor:pointer;transition:all 0.2s"
+                                    onmouseover="this.style.background='#e5e7eb'"
+                                    onmouseout="this.style.background='#f3f4f6'">
+                                Continue Tomorrow
+                            </button>
+                        </div>
+                        <p style="margin:24px 0 0;font-size:13px;color:#9ca3af">
+                            Resets at midnight in your local timezone
+                        </p>
+                    </div>
+                    <style>
+                        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+                        @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+                    </style>
+                \`;
+                document.body.appendChild(overlay);
+            }
+        };
+
+        // Configuration Loader
+        const ConfigLoader = {
+            async fetch() {
+                try {
+                    const response = await fetch(\`\${InsertabotCore.credentials.endpoint}/v1/widget/config\`, {
+                        headers: { "X-API-Key": InsertabotCore.credentials.key }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(\`Configuration fetch failed with status: \${response.status}\`);
+                    }
+
+                    InsertabotCore.state.widgetConfig = await response.json();
+                    return InsertabotCore.state.widgetConfig;
+                } catch (err) {
+                    console.error("[Insertabot] Configuration retrieval error:", err);
+                    throw err;
+                }
+            }
+        };
+
+        // UI Builder - Launcher Button
+        const LauncherButton = {
+            build() {
+                const cfg = InsertabotCore.state.widgetConfig;
+                const button = document.createElement("button");
+                button.id = "ib-launcher";
+                button.setAttribute('aria-label', 'Open chat widget');
+                button.innerHTML = \`
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                    </svg>
+                \`;
+
+                const position = cfg.position === "bottom-left" ? "left:28px" : "right:28px";
+                button.style.cssText = \`
+                    position:fixed;bottom:28px;\${position};width:64px;height:64px;
+                    background:\${cfg.primary_color};border:none;border-radius:50%;
+                    color:white;display:flex;align-items:center;justify-content:center;
+                    cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.2);
+                    transition:all 0.3s cubic-bezier(0.4,0,0.2,1);z-index:9999998;
+                \`;
+
+                button.addEventListener("mouseenter", () => {
+                    button.style.transform = "scale(1.15) rotate(5deg)";
+                    button.style.boxShadow = "0 8px 32px rgba(0,0,0,0.25)";
+                });
+                button.addEventListener("mouseleave", () => {
+                    button.style.transform = "scale(1) rotate(0deg)";
+                    button.style.boxShadow = "0 4px 12px rgba(0,0,0,0.2)";
+                               });
+                button.addEventListener("click", () => WidgetController.toggle());
+
+                document.body.appendChild(button);
+                InsertabotCore.ui.launcher = button;
+            }
+        };
+
+        // Message Renderer
+        const MessageRenderer = {
+            create(sender, textContent) {
+                InsertabotCore.state.conversationHistory.push({ role: sender, content: textContent });
+
+                const bubble = document.createElement("div");
+                bubble.className = \`ib-msg ib-msg-\${sender}\`;
+                bubble.innerHTML = \`<div class="ib-msg-text">\${this.sanitize(textContent)}</div>\`;
+
+                InsertabotCore.ui.messageContainer.appendChild(bubble);
+                this.scrollToBottom();
+                return bubble;
+            },
+
+            update(bubbleElement, textContent) {
+                bubbleElement.querySelector(".ib-msg-text").textContent = textContent;
+                this.scrollToBottom();
+                return bubbleElement;
+            },
+
+            sanitize(rawText) {
+                const wrapper = document.createElement('div');
+                wrapper.textContent = rawText;
+                return wrapper.innerHTML;
+            },
+
+            scrollToBottom() {
+                InsertabotCore.ui.messageContainer.scrollTop = InsertabotCore.ui.messageContainer.scrollHeight;
+            }
+        };
+
+        // AI Communication Handler
+        const AIMessenger = {
+            async process(userInput) {
+                const usageCount = QuotaManager.recordUsage();
+                console.log(\`[Insertabot] Request #\${usageCount}/\${InsertabotCore.quotas.freeTierMax}\`);
+
+                InsertabotCore.state.requestAbortSignal = new AbortController();
+                const cfg = InsertabotCore.state.widgetConfig;
+
+                const payload = {
+                    messages: InsertabotCore.state.conversationHistory,
+                    stream: true,
+                    temperature: cfg.temperature,
+                    max_tokens: cfg.max_tokens
+                };
+
+                try {
+                    const apiResponse = await fetch(\`\${InsertabotCore.credentials.endpoint}/v1/chat/completions\`, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-API-Key": InsertabotCore.credentials.key
+                        },
+                        body: JSON.stringify(payload),
+                        signal: InsertabotCore.state.requestAbortSignal.signal
+                    });
+
+                    if (!apiResponse.ok) {
+                        const errorData = await apiResponse.json();
+                        throw new Error(errorData.error || "API request failed");
+                    }
+
+                    const streamReader = apiResponse.body.getReader();
+                    const textDecoder = new TextDecoder();
+                    let accumulatedResponse = "";
+                    let messageBubble = null;
+
+                    while (true) {
+                        const { done, value } = await streamReader.read();
+                        if (done) break;
+
+                        const chunk = textDecoder.decode(value, { stream: true });
+                        chunk.split("\\n")
+                            .filter(line => line.trim())
+                            .forEach(line => {
+                                if (line.startsWith("data: ")) {
+                                    const payload = line.slice(6);
+                                    if (payload === "[DONE]") return;
+
+                                    try {
+                                        const parsed = JSON.parse(payload);
+                                        const token = parsed.choices?.[0]?.delta?.content;
+                                        if (token) {
+                                            accumulatedResponse += token;
+                                            messageBubble = messageBubble
+                                                ? MessageRenderer.update(messageBubble, accumulatedResponse)
+                                                : MessageRenderer.create("assistant", accumulatedResponse);
+                                        }
+                                    } catch (parseErr) {
+                                        // Ignore malformed JSON chunks
+                                    }
+                                }
+                            });
+                    }
+
+                    InsertabotCore.state.conversationHistory.push({
+                        role: "assistant",
+                        content: accumulatedResponse
+                    });
+
+                    // Check quota limit
+                    if (usageCount >= InsertabotCore.quotas.freeTierMax) {
+                        setTimeout(() => UpgradePrompt.display(), 1200);
+                    }
+                } catch (err) {
+                    if (err.name !== "AbortError") {
+                        console.error("[Insertabot] Communication error:", err);
+                        MessageRenderer.create("assistant", "⚠️ Unable to process your message. Please retry.");
+                    }
+                }
+            }
+        };
+
+        // Main Chat Interface Builder
+        const ChatInterface = {
+            build() {
+                const cfg = InsertabotCore.state.widgetConfig;
+                const frame = document.createElement("div");
+                frame.id = "ib-chat-frame";
+                frame.setAttribute('role', 'complementary');
+                frame.setAttribute('aria-label', 'Chat interface');
+
+                const alignment = cfg.position === "bottom-left" ? "left:28px" : "right:28px";
+                frame.style.cssText = \`
+                    position:fixed;bottom:28px;\${alignment};
+                    width:420px;max-width:calc(100vw - 56px);
+                    height:640px;max-height:calc(100vh - 120px);
+                    background:#ffffff;border-radius:20px;
+                    box-shadow:0 12px 48px rgba(0,0,0,0.18);
+                    display:none;flex-direction:column;overflow:hidden;
+                    z-index:9999998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+                \`;
+
+                frame.innerHTML = \`
+                    <header style="background:\${cfg.primary_color};color:#fff;padding:20px;
+                                   display:flex;align-items:center;justify-content:space-between;
+                                   border-radius:20px 20px 0 0">
+                        <div style="display:flex;align-items:center;gap:12px">
+                            \${cfg.bot_avatar_url
+                                ? \`<img src="\${cfg.bot_avatar_url}" alt="Bot avatar"
+                                        style="width:36px;height:36px;border-radius:50%;
+                                               border:2px solid rgba(255,255,255,0.3);object-fit:cover"/>\`
+                                : \`<div style="width:36px;height:36px;border-radius:50%;
+                                               background:rgba(255,255,255,0.2);display:flex;
+                                               align-items:center;justify-content:center;
+                                               font-weight:bold">\${cfg.bot_name[0]}</div>\`}<div>
+                                <div style="font-weight:600;font-size:16px;letter-spacing:-0.2px">
+                                    \${cfg.bot_name}
+                                </div>
+                                <div style="font-size:12px;opacity:0.9;margin-top:2px">
+                                    🟢 Active now
+                                </div>
+                            </div>
+                        </div>
+                        <button id="ib-close-btn" aria-label="Close chat"
+                                style="background:rgba(255,255,255,0.2);border:none;color:#fff;
+                                       cursor:pointer;padding:4px;display:flex;align-items:center;
+                                       justify-content:center">
+                            <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M18 6L6 18M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </header>
+
+                    <div id="ib-messages"
+                         style="flex:1;overflow-y:auto;padding:20px;
+                                display:flex;flex-direction:column;gap:14px;
+                                background:linear-gradient(to bottom, #f8fafc, #f1f5f9)">
+                    </div>
+
+                    <footer style="padding:18px;background:#fff;border-top:2px solid #e2e8f0">
+                        <form id="ib-input-form" style="display:flex;gap:10px;align-items:flex-end">
+                            <input type="text" id="ib-text-input"
+                                   placeholder="Ask me anything..."
+                                   aria-label="Message input"
+                                   style="flex:1;padding:14px 16px;border:2px solid #e2e8f0;
+                                          border-radius:12px;font-size:15px;outline:none;
+                                          font-family:inherit;transition:border-color 0.2s;
+                                          background:#f8fafc"/>
+                            <button type="submit" id="ib-send-btn" aria-label="Send message"
+                                    style="background:\${cfg.primary_color};color:white;border:none;
+                                           border-radius:12px;padding:14px 24px;cursor:pointer;
+                                           font-weight:700;font-size:15px;transition:opacity 0.2s;
+                                           min-width:80px"
+                                    onmouseover="if(!this.disabled) this.style.opacity='0.85'"
+                                    onmouseout="this.style.opacity='1'">
+                                Send
+                            </button>
+                        </form>
+                    </footer>
+                \`;
+
+                // Inject custom styles
+                const styleSheet = document.createElement("style");
+                styleSheet.textContent = \`
+                    #ib-messages::-webkit-scrollbar { width: 8px; }
+                    #ib-messages::-webkit-scrollbar-track { background: transparent; }
+                    #ib-messages::-webkit-scrollbar-thumb {
+                        background: #cbd5e1;
+                        border-radius: 4px;
+                    }
+                    #ib-messages::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+                    .ib-msg {
+                        display: flex;
+                        gap: 10px;
+                        max-width: 85%;
+                        animation: slideIn 0.3s ease-out;
+                    }
+                    .ib-msg-user {
+                        margin-left: auto;
+                        flex-direction: row-reverse;
+                    }
+                    .ib-msg-text {
+                        background: #ffffff;
+                        color: #1e293b;
+                        padding: 12px 16px;
+                        border-radius: 16px;
+                        font-size: 15px;
+                        line-height: 1.5;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+                        word-wrap: break-word;
+                    }
+                    .ib-msg-user .ib-msg-text {
+                        background: \${cfg.primary_color};
+                        color: #fff;
+                        border-bottom-right-radius: 4px;
+                    }
+                    .ib-msg-assistant .ib-msg-text {
+                        border-bottom-left-radius: 4px;
+                    }
+
+                    #ib-text-input:focus {
+                        border-color: \${cfg.primary_color};
+                        background: #fff;
+                    }
+                    #ib-send-btn:disabled {
+                        opacity: 0.5;
+                        cursor: not-allowed;
+                    }
+
+                    @keyframes slideIn {
+                        from { opacity: 0; transform: translateY(10px); }
+                        to { opacity: 1; transform: translateY(0); }
+                    }
+                \`;
+                document.head.appendChild(styleSheet);
+                document.body.appendChild(frame);
+
+                // Store UI references
+                InsertabotCore.ui.chatFrame = frame;
+                InsertabotCore.ui.messageContainer = document.getElementById("ib-messages");
+                InsertabotCore.ui.inputField = document.getElementById("ib-text-input");
+                InsertabotCore.ui.submitForm = document.getElementById("ib-input-form");
+
+                // Display welcome message
+                MessageRenderer.create("assistant", cfg.greeting_message);
+
+                // Wire up event handlers
+                document.getElementById("ib-close-btn").addEventListener("click", () => {
+                    WidgetController.toggle();
+                });
+
+                InsertabotCore.ui.submitForm.addEventListener("submit", async (evt) => {
+                    evt.preventDefault();
+
+                    const userText = InsertabotCore.ui.inputField.value.trim();
+                    if (!userText || InsertabotCore.state.processingRequest) return;
+
+                    MessageRenderer.create("user", userText);
+                    InsertabotCore.ui.inputField.value = "";
+
+                    InsertabotCore.state.processingRequest = true;
+                    InsertabotCore.ui.inputField.disabled = true;
+                    document.getElementById("ib-send-btn").disabled = true;
+
+                    try {
+                        InsertabotCore.state.conversationHistory.push({
+                            role: "user",
+                            content: userText
+                        });
+                        await AIMessenger.process(userText);
+                    } catch (processingErr) {
+                        console.error("[Insertabot] Processing error:", processingErr);
+                        MessageRenderer.create("assistant", "⚠️ Unable to process your message. Please retry.");
+                    } finally {
+                        InsertabotCore.state.processingRequest = false;
+                        InsertabotCore.ui.inputField.disabled = false;
+                        document.getElementById("ib-send-btn").disabled = false;
+                        InsertabotCore.ui.inputField.focus();
+                    }
+                });
+            }
+        };
+
+        // Widget Visibility Controller
+        const WidgetController = {
+            toggle() {
+                InsertabotCore.state.isWidgetVisible = !InsertabotCore.state.isWidgetVisible;
+
+                if (InsertabotCore.state.isWidgetVisible) {
+                    InsertabotCore.ui.launcher.style.display = "none";
+                    InsertabotCore.ui.chatFrame.style.display = "flex";
+                    InsertabotCore.ui.inputField.focus();
+                } else {
+                    InsertabotCore.ui.launcher.style.display = "flex";
+                    InsertabotCore.ui.chatFrame.style.display = "none";
+                }
+            }
+        };
+
+        // Application Bootstrapper
+        async function bootstrap() {
+            try {
+                // Initialize quota tracking
+                const usage = QuotaManager.retrieveUsageData();
+                InsertabotCore.state.userQuota = usage;
+                console.log(\`[Insertabot] Usage: \${usage.consumed}/\${InsertabotCore.quotas.freeTierMax}\`);
+
+                // Fetch widget configuration
+                await ConfigLoader.fetch();
+
+                // Add system prompt to conversation
+                InsertabotCore.state.conversationHistory.push({
+                    role: "system",
+                    content: InsertabotCore.state.widgetConfig.system_prompt
+                });
+
+                // Build UI components
+                LauncherButton.build();
+                ChatInterface.build();
+
+                console.log("[Insertabot] Widget initialized successfully");
+            } catch (initError) {
+                console.error("[Insertabot] Initialization failed:", initError);
+            }
+        }
+
+        // Start widget when DOM is ready
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", bootstrap);
+        } else {
+            bootstrap();
+        }
+    })();
+    </script>
+
+    <script>
+    // Stripe Pro Upgrade Handler
+    window.handleProUpgrade = async function(event) {
+        if (event) event.preventDefault();
+        console.log('Upgrade button clicked');
+
+        // Show email input modal
+        const emailModal = document.createElement('div');
+        emailModal.id = 'email-modal';
+        emailModal.style.cssText = \`
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        \`;
+
+        emailModal.innerHTML = \`
+            <div style="
+                background: #1e293b;
+                border-radius: 12px;
+                padding: 32px;
+                max-width: 400px;
+                width: 90%;
+                color: #f1f5f9;
+                box-shadow: 0 20px 25px rgba(0, 0, 0, 0.3);
+            ">
+                <h2 style="margin: 0 0 16px 0; font-size: 24px;">Upgrade to Pro</h2>
+                <p style="margin: 0 0 24px 0; color: #cbd5e1; font-size: 14px;">
+                    Enter your email to proceed with payment
+                </p>
+                <input
+                    type="email"
+                    id="upgrade-email"
+                    placeholder="your@email.com"
+                    style="
+                        width: 100%;
+                        padding: 12px;
+                        border: 1px solid #334155;
+                        border-radius: 8px;
+                        background: #0f172a;
+                        color: #f1f5f9;
+                        font-size: 14px;
+                        margin-bottom: 16px;
+                        box-sizing: border-box;
+                    "
+                />
+                <div style="display: flex; gap: 12px;">
+                    <button id="upgrade-cancel" style="
+                        flex: 1;
+                        padding: 12px;
+                        border: 1px solid #334155;
+                        background: transparent;
+                        color: #cbd5e1;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 14px;
+                    ">Cancel</button>
+                    <button id="upgrade-submit" style="
+                        flex: 1;
+                        padding: 12px;
+                        background: linear-gradient(135deg, #818cf8, #c084fc);
+                        color: white;
+                        border: none;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 14px;
+                        font-weight: 600;
+                    ">Upgrade Now</button>
+                </div>
+            </div>
+        \`;
+
+        document.body.appendChild(emailModal);
+        const emailInput = document.getElementById('upgrade-email');
+        emailInput.focus();
+
+        const cleanup = () => {
+            emailModal.remove();
+        };
+
+        document.getElementById('upgrade-cancel').onclick = cleanup;
+
+        document.getElementById('upgrade-submit').onclick = async () => {
+            const email = emailInput.value.trim();
+            console.log('Email entered:', email);
+
+            // Validate email format
+            const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;
+            if (!email || !emailRegex.test(email)) {
+                alert('Please enter a valid email address');
+                return;
+            }
+
+            cleanup();
+
+            try {
+                console.log('Calling /v1/checkout with email:', email);
+                const response = await fetch('/v1/checkout', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        success_url: window.location.origin + '/checkout-success',
+                        cancel_url: window.location.origin + '/?pricing=true'
+                    })
+                });
+
+                console.log('Response status:', response.status);
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    console.error('Checkout error:', error);
+                    alert('Error: ' + (error.error || 'Failed to create checkout session'));
+                    return;
+                }
+
+                const data = await response.json();
+                console.log('Checkout response:', data);
+
+                if (data.url) {
+                    console.log('Redirecting to Stripe:', data.url);
+                    window.location.href = data.url;
+                } else {
+                    alert('Failed to create checkout session');
+                }
+            } catch (error) {
+                console.error('Checkout error:', error);
+                alert('An error occurred. Please try again.');
+            }
+        };
+
+        // Allow Enter key to submit
+        emailInput.onkeypress = (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('upgrade-submit').click();
+            }
+        };
+
+        // Allow Escape to cancel
+        const escapeHandler = (e) => {
+            if (e.key === 'Escape') {
+                cleanup();
+                document.removeEventListener('keydown', escapeHandler);
+            }
+        };
+        document.addEventListener('keydown', escapeHandler);
+    };
+    </script>
+</body>
+</html>`;
+        return new Response(html, {
+          headers: {
+            "Content-Type": "text/html",
+            ...corsHeaders,
+          },
+        });
+      }
+
+      // Favicon - return 204 No Content to silence browser warnings
+      if (url.pathname === "/favicon.ico") {
+        return new Response(null, { status: 204 });
+      }
+
+      // Health check endpoint
+      if (url.pathname === "/health" && request.method === "GET") {
+        const response = await handleHealthCheck(env);
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
+        return new Response(response.body, {
+          status: response.status,
+          headers: { ...responseHeaders, ...corsHeaders },
+        });
+      }
+
+      // Widget config endpoint
+      if (url.pathname === "/v1/widget/config" && request.method === "GET") {
+        const apiKey = getApiKey(request);
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Missing API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        const customer = await getCustomerConfig(env.DB, apiKey);
+        if (!customer) {
+          return new Response(JSON.stringify({ error: "Invalid API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        const widgetConfig = await getWidgetConfig(
+          env.DB,
+          customer.customer_id
+        );
+        if (!widgetConfig) {
+          return new Response(
+            JSON.stringify({ error: "Widget configuration not found" }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            }
+          );
+        }
+
+        return new Response(JSON.stringify(widgetConfig), {
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // Stripe webhook endpoint
+      if (url.pathname === "/v1/stripe/webhook" && request.method === "POST") {
+        const signature = request.headers.get("stripe-signature");
+        if (!signature || !env.STRIPE_WEBHOOK_SECRET) {
+          return new Response(
+            JSON.stringify({ error: "Missing webhook signature or secret" }),
+            {
+              status: 401,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        const body = await request.text();
+        const isValid = await verifyWebhookSignature(
+          body,
+          signature,
+          env.STRIPE_WEBHOOK_SECRET
+        );
+
+        if (!isValid) {
+          return new Response(JSON.stringify({ error: "Invalid signature" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        try {
+          const event = JSON.parse(body);
+          const processed = await processWebhookEvent(event, env.DB);
+
+          return new Response(JSON.stringify({ received: processed }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (error) {
+          console.error("Webhook processing error:", error);
+          return new Response(JSON.stringify({ error: "Processing error" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // Stripe checkout endpoint (public - for landing page upgrades)
+      if (url.pathname === "/v1/checkout" && request.method === "POST") {
+        // Validate request with Zod schema
+        const validation = await validateRequest(
+          request.clone() as Request,
+          checkoutRequestSchema
+        );
+        if (!validation.success) {
+          return new Response(JSON.stringify({ error: validation.error }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        const checkoutRequest = validation.data;
+
+        if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRO_PRICE_ID) {
+          return new Response(
+            JSON.stringify({ error: "Stripe not configured" }),
+            {
+              status: 503,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            }
+          );
+        }
+
+        // For public checkout, we generate a temporary customer ID based on email
+        // This allows tracking the customer through the checkout process
+        const tempCustomerId =
+          "web_" +
+          checkoutRequest.email.replace(/[^a-zA-Z0-9]/g, "_").substring(0, 30);
+
+        // Create checkout session
+        const session = await createCheckoutSession(
+          env.STRIPE_SECRET_KEY,
+          tempCustomerId,
+          checkoutRequest.email,
+          env.STRIPE_PRO_PRICE_ID,
+          checkoutRequest.success_url || `${url.origin}/checkout-success`
+        );
+
+        if (!session) {
+          return new Response(
+            JSON.stringify({ error: "Failed to create checkout session" }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({ sessionId: session.sessionId, url: session.url }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      // Subscription status endpoint
+      if (
+        url.pathname === "/v1/subscription/status" &&
+        request.method === "GET"
+      ) {
+        const apiKey = getApiKey(request);
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Missing API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Get customer config
+        const customerConfig = await getCustomerConfig(env.DB, apiKey);
+        if (!customerConfig) {
+          return new Response(JSON.stringify({ error: "Invalid API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Get subscription status
+        const subStatus = await getSubscriptionStatus(
+          env.DB,
+          customerConfig.customer_id
+        );
+
+        return new Response(
+          JSON.stringify({
+            subscription_status: subStatus?.status || "none",
+            plan_type: subStatus?.plan || "free",
+            is_pro: subStatus?.plan === "pro" && subStatus?.status === "active",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          }
+        );
+      }
+
+      // Chat completions endpoint (OpenAI compatible)
+      if (
+        url.pathname === "/v1/chat/completions" &&
+        request.method === "POST"
+      ) {
+        const apiKey = getApiKey(request);
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Missing API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Validate API key format
+        if (!validateApiKey(apiKey)) {
+          return new Response(
+            JSON.stringify({ error: "Invalid API key format" }),
+            {
+              status: 401,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            }
+          );
+        }
+
+        // Get customer config
+        const customerConfig = await getCustomerConfig(env.DB, apiKey);
+        if (!customerConfig) {
+          return new Response(JSON.stringify({ error: "Invalid API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Check rate limits
+        const rateLimitCheck = await checkRateLimit(
+          env.RATE_LIMITER,
+          customerConfig.customer_id,
+          customerConfig.rate_limit_per_hour,
+          customerConfig.rate_limit_per_day
+        );
+
+        if (!rateLimitCheck.allowed) {
+          return new Response(
+            JSON.stringify({ error: "Rate limit exceeded" }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(rateLimitCheck.retryAfter),
+                ...corsHeaders,
+              },
+            }
+          );
+        }
+
+        // Get widget config
+        const widgetConfig = await getWidgetConfig(
+          env.DB,
+          customerConfig.customer_id
+        );
+        if (!widgetConfig) {
+          return new Response(
+            JSON.stringify({ error: "Widget configuration not found" }),
+            {
+              status: 404,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            }
+          );
+        }
+
+        // Validate request with Zod schema
+        const validation = await validateRequest(
+          request.clone() as Request,
+          chatRequestSchema
+        );
+        if (!validation.success) {
+          return new Response(JSON.stringify({ error: validation.error }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        const chatRequest = validation.data;
+
+        // Use messages as-is (widget already includes system prompt)
+        const messages = chatRequest.messages;
+        const stream = chatRequest.stream ?? false;
+        const temperature =
+          chatRequest.temperature ?? widgetConfig.temperature ?? 0.7;
+        const maxTokens =
+          chatRequest.max_tokens ?? widgetConfig.max_tokens ?? 500;
+        const model = chatRequest.model ?? widgetConfig.model ?? "llama-3-8b";
+
+        // Get the last user message for search detection
+        const userMessage = messages[messages.length - 1];
+
+        // Perform web search if query needs current information
+        let searchContext = "";
+        if (
+          userMessage &&
+          env.TAVILY_API_KEY &&
+          shouldPerformSearch(extractTextFromMessage(userMessage.content))
+        ) {
+          console.log(
+            "[v1/chat] Triggering web search for query:",
+            extractTextFromMessage(userMessage.content).substring(0, 100)
+          );
+
+          try {
+            const searchResults = await performWebSearch(
+              userMessage.content,
+              env.TAVILY_API_KEY,
+              5
+            );
+
+            if (searchResults.length > 0) {
+              searchContext = formatSearchResultsForAI(searchResults);
+              console.log(
+                "[v1/chat] Web search completed with",
+                searchResults.length,
+                "results"
+              );
+            } else {
+              console.log("[v1/chat] Web search returned no results");
+            }
+          } catch (searchError) {
+            console.error("[v1/chat] Web search failed:", searchError);
+            // Continue without search results
+          }
+        }
+
+        // Inject search results into system message if available
+        let finalMessages = messages;
+        if (searchContext) {
+          // Find system message or create one
+          const systemMessageIndex = messages.findIndex(
+            (m) => m.role === "system"
+          );
+          if (systemMessageIndex >= 0) {
+            // Append to existing system message
+            finalMessages = [...messages];
+            finalMessages[systemMessageIndex] = {
+              ...finalMessages[systemMessageIndex],
+              content:
+                finalMessages[systemMessageIndex].content + searchContext,
+            };
+          } else {
+            // Prepend new system message with search context
+            finalMessages = [
+              {
+                role: "system",
+                content: "You are a helpful assistant." + searchContext,
+              },
+              ...messages,
+            ];
+          }
+        }
+
+        // Call Cloudflare Workers AI
+        const aiResponse = await callCloudflareAI(
+          env.AI,
+          finalMessages,
+          model,
+          temperature,
+          maxTokens,
+          stream
+        );
+
+        // Return the response as-is (streaming or not)
+        const responseHeaders: Record<string, string> = {};
+        aiResponse.headers.forEach((value: string, key: string) => {
+          responseHeaders[key] = value;
+        });
+
+        return new Response(aiResponse.body, {
+          status: aiResponse.status,
+          headers: { ...responseHeaders, ...corsHeaders },
+        });
+      }
+
+      // Signup page
+      if (url.pathname === "/signup" && request.method === "GET") {
+        return new Response(getSignupHTML(), {
+          status: 200,
+          headers: { "Content-Type": "text/html", ...corsHeaders },
+        });
+      }
+
+      // Dashboard page
+      if (url.pathname === "/dashboard" && request.method === "GET") {
+        const apiKey = url.searchParams.get("key");
+        if (!apiKey) {
+          return new Response("Missing API key", { status: 400 });
+        }
+
+        const customer = await getCustomerConfig(env.DB, apiKey);
+        if (!customer) {
+          return new Response("Invalid API key", { status: 401 });
+        }
+
+        const widgetConfig = await getWidgetConfig(
+          env.DB,
+          customer.customer_id
+        );
+        if (!widgetConfig) {
+          return new Response("Widget config not found", { status: 404 });
+        }
+
+        return new Response(
+          getDashboardHTML(customer, widgetConfig, url.origin),
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html", ...corsHeaders },
+          }
+        );
+      }
+
+      // Create customer API
+      if (
+        url.pathname === "/api/customer/create" &&
+        request.method === "POST"
+      ) {
+        try {
+          const body = (await request.json()) as {
+            email: string;
+            company_name: string;
+          };
+
+          if (!body.email || !body.company_name) {
+            return new Response(
+              JSON.stringify({ error: "Email and company name required" }),
+              {
+                status: 400,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              }
+            );
+          }
+
+          const existing = await getCustomerByEmail(env.DB, body.email);
+          if (existing) {
+            return new Response(
+              JSON.stringify({ error: "Email already registered" }),
+              {
+                status: 400,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              }
+            );
+          }
+
+          const customer = await createCustomer(
+            env.DB,
+            body.email,
+            body.company_name
+          );
+          if (!customer) {
+            return new Response(
+              JSON.stringify({ error: "Failed to create customer" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              }
+            );
+          }
+
+          return new Response(JSON.stringify(customer), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: "Invalid request" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+      }
+
+      // Update customer config API
+      if (url.pathname === "/api/customer/config" && request.method === "PUT") {
+        const apiKey = getApiKey(request);
+        if (!apiKey) {
+          return new Response(JSON.stringify({ error: "Missing API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        const customer = await getCustomerConfig(env.DB, apiKey);
+        if (!customer) {
+          return new Response(JSON.stringify({ error: "Invalid API key" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        try {
+          const config = (await request.json()) as any;
+          const success = await updateWidgetConfig(
+            env.DB,
+            customer.customer_id,
+            config
+          );
+
+          if (!success) {
+            return new Response(
+              JSON.stringify({ error: "Failed to update config" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders },
+              }
+            );
+          }
+
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        } catch (error) {
+          return new Response(JSON.stringify({ error: "Invalid request" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+      }
+
+      // Serve embeddable widget script for customers
+      if (url.pathname === "/widget.js" && request.method === "GET") {
+        const widgetScript = `(function(){"use strict";const e=document.currentScript,t=e?.getAttribute("data-api-key"),n=e?.getAttribute("data-api-base")||"${url.origin}";if(!t)return void console.error("[Insertabot] Missing data-api-key attribute");let o,i=null,s=!1,r=[],a=!1,l=null,c=null,d=null,u=null,p=null;async function g(){try{const e=await fetch(\`\${n}/v1/widget/config\`,{headers:{"X-API-Key":t}});if(!e.ok)throw new Error(\`Failed to fetch config: \${e.status}\`);return i=await e.json(),i}catch(e){throw console.error("[Insertabot] Failed to load configuration:",e),e}}function m(){c=document.createElement("div"),c.id="insertabot-bubble",c.innerHTML='<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15C21 15.5304 20.7893 16.0391 20.4142 16.4142C20.0391 16.7893 19.5304 17 19 17H7L3 21V5C3 4.46957 3.21071 3.96086 3.58579 3.58579C3.96086 3.21071 4.46957 3 5 3H19C19.5304 3 20.0391 3.21071 20.4142 3.58579C20.7893 3.96086 21 4.46957 21 5V15Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',c.style.cssText=\`position:fixed;\${"bottom-left"===i.position?"left: 24px;":"right: 24px;"}bottom:24px;width:60px;height:60px;background:\${i.primary_color};border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,0.15);transition:transform 0.2s,box-shadow 0.2s;z-index:999999\`,c.addEventListener("mouseenter",(()=>{c.style.transform="scale(1.1)",c.style.boxShadow="0 6px 16px rgba(0,0,0,0.2)"})),c.addEventListener("mouseleave",(()=>{c.style.transform="scale(1)",c.style.boxShadow="0 4px 12px rgba(0,0,0,0.15)"})),c.addEventListener("click",h),document.body.appendChild(c)}function f(){d=document.createElement("div"),d.id="insertabot-container",d.style.cssText=\`position:fixed;\${"bottom-left"===i.position?"left: 24px;":"right: 24px;"}bottom:24px;width:400px;max-width:calc(100vw - 48px);height:600px;max-height:calc(100vh - 100px);background:white;border-radius:16px;box-shadow:0 8px 32px rgba(0,0,0,0.12);display:none;flex-direction:column;overflow:hidden;z-index:9999998;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif\`,d.innerHTML=\`<div style="background:\${i.primary_color};color:white;padding:16px;display:flex;align-items:center;justify-content:space-between"><div style="display:flex;align-items:center;gap:12px">\${i.bot_avatar_url?\`<img src="\${i.bot_avatar_url}" alt="\${i.bot_name}" style="width:36px;height:36px;border-radius:50%;border:2px solid white"/>\`:\`<div style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-weight:bold">\${i.bot_name[0]}</div>\`}<div><div style="font-weight:600;font-size:16px;letter-spacing:-0.2px">
+                                    \${i.bot_name}
+                                </div><div style="font-size:12px;opacity:0.9;margin-top:2px">
+                                    🟢 Active now
+                                </div></div></div><button id="insertabot-close" style="background:none;border:none;color:white;cursor:pointer;padding:4px;display:flex;align-items:center;justify-content:center"><svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div><div id="insertabot-messages" style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px;background:#f9fafb"><div class="insertabot-message insertabot-message-assistant"><div class="insertabot-message-content">\${i.greeting_message}</div></div></div><div style="padding:16px;background:white;border-top:1px solid #e5e7eb"><form id="insertabot-form" style="display:flex;gap:8px"><input type="text" id="insertabot-input" placeholder="\${i.placeholder_text}" style="flex:1;padding:12px;border:1px solid #e5e7eb;border-radius:8px;font-size:14px;outline:none"/><button type="submit" id="insertabot-send" style="background:\${i.primary_color};color:white;border:none;border-radius:8px;padding:12px 20px;cursor:pointer;font-weight:600;font-size:14px;transition:opacity 0.2s">Send</button></form></div>\`;const e=document.createElement("style");e.textContent=\`#insertabot-messages::-webkit-scrollbar{width:6px}#insertabot-messages::-webkit-scrollbar-track{background:transparent}#insertabot-messages::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:3px}.insertabot-message{display:flex;gap:8px;max-width:80%}.insertabot-message-user{margin-left:auto;flex-direction:row-reverse}.insertabot-message-content{background:white;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.5;box-shadow:0 1px 2px rgba(0,0,0,0.05)}.insertabot-message-user .insertabot-message-content{background:\${i.primary_color};color:white}#insertabot-input:focus{border-color:\${i.primary_color}}#insertabot-send:hover:not(:disabled){opacity:0.9}#insertabot-send:disabled{opacity:0.5;cursor:not-allowed}\`,document.head.appendChild(e),document.body.appendChild(d),u=document.getElementById("insertabot-messages"),p=document.getElementById("insertabot-input"),o=document.getElementById("insertabot-form"),document.getElementById("insertabot-close").addEventListener("click",h),o.addEventListener("submit",b)}function h(){s=!s,s?(c.style.display="none",d.style.display="flex",p.focus()):(c.style.display="flex",d.style.display="none")}function y(e,t){r.push({role:e,content:t});const n=document.createElement("div");return n.className=\`insertabot-message insertabot-message-\${e}\`,n.innerHTML=\`<div class="insertabot-message-content">\${((e=>{const t=document.createElement("div");return t.textContent=e,t.innerHTML})(t))}</div>\`,u.appendChild(n),u.scrollTop=u.scrollHeight,n}function v(e,t){e.querySelector(".insertabot-message-content").textContent=t,u.scrollTop=u.scrollHeight}async function b(e){if(e.preventDefault(),!p.value.trim()||a)return;const t=p.value.trim();y("user",t),p.value="",a=!0,p.disabled=!0,document.getElementById("insertabot-send").disabled=!0;try{await async function(e){l=new AbortController;const t={messages:r,stream:!0,temperature:i.temperature,max_tokens:i.max_tokens},o=await fetch(\`\${n}/v1/chat/completions\`,{method:"POST",headers:{"Content-Type":"application/json","X-API-Key":t},body:JSON.stringify(t),signal:l.signal});if(!o.ok){const e=await o.json();throw new Error(e.error||"Request failed")}const s=o.body.getReader(),a=new TextDecoder;let c="",d=null;try{for(;;){const{done:e,value:t}=await s.read();if(e)break;a.decode(t,{stream:!0}).split("\\n").filter((e=>""!==e.trim())).forEach((e=>{if(e.startsWith("data: ")){const t=e.slice(6);if("[DONE]"===t)return;try{const e=JSON.parse(t).choices?.[0]?.delta?.content;e&&(c+=e,d=d?v(d,c):y("assistant",c))}catch(e){}}}))}}catch(e){if("AbortError"!==e.name)throw e}c&&r.push({role:"assistant",content:c})}(t)}catch(e){console.error("[Insertabot] Error:",e),y("assistant","Sorry, I encountered an error. Please try again.")}finally{a=!1,p.disabled=!1,document.getElementById("insertabot-send").disabled=!1,p.focus()}}!async function(){try{await g(),r.push({role:"system",content:i.system_prompt}),m(),f()}catch(e){console.error("[Insertabot] Failed to initialize:",e)}}()})()`;
+
+        return new Response(widgetScript, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/javascript",
+            "Cache-Control": "public, max-age=3600",
+            ...corsHeaders,
+          },
+        });
+      }
+
+      // 404 for unknown routes
+      return new Response(JSON.stringify({ error: "Not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Request handler error:", error);
+      return new Response(JSON.stringify({ error: "Internal server error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  },
+};

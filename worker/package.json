@@ -1,0 +1,37 @@
+{
+  "name": "insertabot-worker",
+  "version": "1.0.0",
+  "description": "Insertabot SaaS - Multi-tenant chatbot API on Cloudflare Workers",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:dev": "wrangler deploy --env development",
+    "tail": "wrangler tail",
+    "db:create": "wrangler d1 create insertabot-production",
+    "db:create:dev": "wrangler d1 create insertabot-development",
+    "db:migrate": "wrangler d1 execute insertabot-production --file=../schema.sql",
+    "db:migrate:dev": "wrangler d1 execute insertabot-development --file=../schema.sql --local",
+    "db:query": "wrangler d1 execute insertabot-production",
+    "kv:create": "wrangler kv:namespace create RATE_LIMITER",
+    "kv:create:dev": "wrangler kv:namespace create RATE_LIMITER --preview",
+    "vectorize:create": "wrangler vectorize create insertabot-embeddings --dimensions=768 --metric=cosine"
+  },
+  "keywords": [
+    "chatbot",
+    "cloudflare",
+    "workers",
+    "ai",
+    "saas"
+  ],
+  "author": "Mistyk Media",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241127.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.51.0"
+  },
+  "dependencies": {
+    "zod": "^3.22.3"
+  }
+}

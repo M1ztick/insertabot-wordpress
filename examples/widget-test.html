@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insertabot Widget - API Key Validation Test</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 50px;
+        }
+
+        .header h1 {
+            font-size: 48px;
+            margin-bottom: 12px;
+            font-weight: 700;
+        }
+
+        .header p {
+            font-size: 20px;
+            opacity: 0.9;
+        }
+
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+
+        .test-card {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .test-card h2 {
+            font-size: 24px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .test-card p {
+            color: #6b7280;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+
+        .test-card pre {
+            background: #f8fafc;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .test-card code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: #1e293b;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .status.error {
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+        .status.success {
+            background: #f0fdf4;
+            color: #16a34a;
+        }
+
+        .expected {
+            margin-top: 20px;
+            padding: 16px;
+            background: #fffbeb;
+            border-left: 4px solid #f59e0b;
+            border-radius: 8px;
+        }
+
+        .expected strong {
+            display: block;
+            color: #92400e;
+            margin-bottom: 8px;
+        }
+
+        .expected p {
+            color: #78350f;
+            margin: 0;
+        }
+
+        .console-note {
+            background: #fef2f2;
+            border: 2px solid #fecaca;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 30px;
+        }
+
+        .console-note h3 {
+            color: #dc2626;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .console-note p {
+            color: #991b1b;
+            line-height: 1.6;
+        }
+
+        .console-note code {
+            background: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Insertabot Widget Test Suite</h1>
+            <p>API Key Validation & Error Handling Demo</p>
+        </div>
+
+        <div class="test-grid">
+            <!-- Test 1: No API Key -->
+            <div class="test-card">
+                <h2>
+                    <span class="status error">❌ Test 1</span>
+                    Missing API Key
+                </h2>
+                <p>Widget loaded without <code>data-api-key</code> attribute.</p>
+                
+                <pre><code>&lt;script src="widget.js"&gt;&lt;/script&gt;</code></pre>
+
+                <div class="expected">
+                    <strong>📋 Expected Behavior:</strong>
+                    <p>• Red error banner appears<br>• Detailed console error<br>• Widget won't initialize</p>
+                </div>
+            </div>
+
+            <!-- Test 2: Placeholder Key -->
+            <div class="test-card">
+                <h2>
+                    <span class="status error">❌ Test 2</span>
+                    Placeholder Key
+                </h2>
+                <p>Widget loaded with demo/placeholder API key.</p>
+                
+                <pre><code>&lt;script 
+  src="widget.js"
+  data-api-key="ib_sk_demo_REPLACE"&gt;
+&lt;/script&gt;</code></pre>
+
+                <div class="expected">
+                    <strong>📋 Expected Behavior:</strong>
+                    <p>• Red error banner appears<br>• Detailed console error<br>• Widget won't initialize</p>
+                </div>
+            </div>
+
+            <!-- Test 3: Valid Key (Example) -->
+            <div class="test-card">
+                <h2>
+                    <span class="status success">✅ Test 3</span>
+                    Valid API Key
+                </h2>
+                <p>Widget loaded with properly formatted API key.</p>
+                
+                <pre><code>&lt;script 
+  src="widget.js"
+  data-api-key="ib_sk_live_abc123def456"&gt;
+&lt;/script&gt;</code></pre>
+
+                <div class="expected">
+                    <strong>📋 Expected Behavior:</strong>
+                    <p>• No error messages<br>• Chat launcher appears<br>• Widget initializes normally</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Console Instructions -->
+        <div class="console-note">
+            <h3>
+                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 8v4M12 16h.01"/>
+                </svg>
+                Open Developer Console
+            </h3>
+            <p>
+                <strong>To see detailed error messages:</strong><br>
+                1. Press <code>F12</code> or <code>Cmd+Option+I</code> (Mac)<br>
+                2. Click the <strong>Console</strong> tab<br>
+                3. Look for red error messages with ASCII borders<br>
+                4. Each error includes setup instructions and helpful links
+            </p>
+        </div>
+    </div>
+
+    <!-- 
+    =================================================================
+    UNCOMMENT ONE OF THE TESTS BELOW TO SEE VALIDATION IN ACTION
+    =================================================================
+    -->
+
+    <!-- TEST 1: Missing API Key (UNCOMMENT TO TEST) -->
+    <!-- <script src="https://insertabot.mistyk.media/widget.js"></script> -->
+
+    <!-- TEST 2: Placeholder/Demo Key (UNCOMMENT TO TEST) -->
+    <!-- <script 
+        src="https://insertabot.mistyk.media/widget.js" 
+        data-api-key="ib_sk_demo_REPLACE">
+    </script> -->
+
+    <!-- TEST 3: Valid Key Format (REPLACE WITH YOUR ACTUAL KEY) -->
+    <!--
+    <script 
+        src="https://insertabot.mistyk.media/widget.js" 
+        data-api-key="YOUR_ACTUAL_API_KEY_HERE">
+    </script>
+    -->
+
+    <script>
+        // Add helpful console message
+        console.log('%c🔐 Insertabot Widget Test Page', 'font-size: 24px; font-weight: bold; color: #6366f1;');
+        console.log('%cUncomment one of the script tags in the HTML to test validation', 'font-size: 14px; color: #64748b;');
+        console.log('');
+        console.log('Available tests:');
+        console.log('  1️⃣ Missing API key');
+        console.log('  2️⃣ Placeholder/demo key');
+        console.log('  3️⃣ Valid API key format');
+        console.log('');
+        console.log('Check the page for visual error banners and detailed console errors.');
+    </script>
+</body>
+</html>

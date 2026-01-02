@@ -1,0 +1,11 @@
+# Local development environment variables
+# Copy this file to .dev.vars and fill in your actual values
+# DO NOT commit .dev.vars to git (it's in .gitignore)
+
+# Tavily API Key for web search (get free key at https://tavily.com)
+TAVILY_API_KEY=tvly-your-actual-key-here
+
+# Stripe keys for local testing (optional)
+# STRIPE_SECRET_KEY=sk_test_...
+# STRIPE_WEBHOOK_SECRET=whsec_...
+# STRIPE_PRO_PRICE_ID=price_...

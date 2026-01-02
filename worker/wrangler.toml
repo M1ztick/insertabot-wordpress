@@ -1,0 +1,78 @@
+# insertabot-api - Cloudflare Workers Configuration
+
+name = "insertabot-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+assets = { directory = "public" }
+
+# Observability - Enable logging for debugging and monitoring
+# Production uses 10% sampling to manage costs while still capturing issues
+[observability.logs]
+enabled = true
+head_sampling_rate = 0.1
+invocation_logs = true
+
+# D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "insertabot-production"
+database_id = "3d7d004d-ed6c-486c-a51e-a59f51bcd307"
+
+# KV Namespace for rate limiting
+[[kv_namespaces]]
+binding = "RATE_LIMITER"
+id = "5f08c9439c594be69c44c69a8c7aa280"
+
+# Vectorize index for RAG
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "insertabot-embeddings"
+
+# Analytics Engine for usage tracking
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+
+# Workers AI binding
+[ai]
+binding = "AI"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "production"
+CORS_ORIGINS = "https://insertabot.io" # Production CORS - specific domain for security
+STRIPE_PUBLISHABLE_KEY = "pk_live_51QOYyjG8Nyr8TvxI1U1wVGXdC1V8X801lKl1dUW3hFKZnijRHcORkr680kqYYNZSbSUdmoHAoSPMMhFx6Zu4FgwM00gPsULLt8"
+
+# Secrets (set via: wrangler secret put SECRET_NAME)
+# STRIPE_SECRET_KEY - Add via: wrangler secret put STRIPE_SECRET_KEY
+# STRIPE_WEBHOOK_SECRET - Add via: wrangler secret put STRIPE_WEBHOOK_SECRET
+# STRIPE_PRO_PRICE_ID - Add via: wrangler secret put STRIPE_PRO_PRICE_ID
+# TAVILY_API_KEY - Add via: wrangler secret put TAVILY_API_KEY (Get free key at https://tavily.com/ - 1,000 searches/month free, AI-optimized)
+
+# Routes
+routes = [
+  { pattern = "insertabot.io/*", zone_name = "insertabot.io" }
+]
+
+# Development configuration
+[env.development]
+name = "insertabot-api-dev"
+
+# Development observability - Full logging for debugging (100% sampling)
+[env.development.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+
+[env.development.vars]
+ENVIRONMENT = "development"
+CORS_ORIGINS = "localhost:3000,localhost:5173,127.0.0.1:3000" # Local development origins
+
+[[env.development.d1_databases]]
+binding = "DB"
+database_name = "insertabot-development"
+database_id = "551c3e86-cbf6-4217-8617-20d60085a7f1"
+
+[[env.development.kv_namespaces]]
+binding = "RATE_LIMITER"
+id = "3ff9aad75a3443709196fc824f40a4d2"
