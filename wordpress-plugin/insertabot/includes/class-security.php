@@ -179,32 +179,34 @@ class Insertabot_Security {
     
     /**
      * Hash API key for logging purposes (never log full key)
-     * 
+     *
      * @param string $api_key The API key
-     * @return string Hashed key (first 8 chars + hash of rest)
+     * @return string Hashed key (first 4 chars + hash of rest)
      */
     public static function hash_api_key_for_log($api_key) {
-        if (strlen($api_key) < 12) {
+        if (strlen($api_key) < 8) {
             return '***';
         }
-        
-        $prefix = substr($api_key, 0, 8);
+
+        // Show only first 4 chars to minimize exposure
+        $prefix = substr($api_key, 0, 4);
         $hash = substr(hash('sha256', $api_key), 0, 8);
-        
+
         return $prefix . '...' . $hash;
     }
     
     /**
      * Log security events
-     * 
+     *
      * @param string $event Event description
      * @param array $context Additional context
      */
     public static function log_event($event, $context = array()) {
-        if (!defined('INSERTABOT_SECURITY_LOG') || !INSERTABOT_SECURITY_LOG) {
+        // Allow developers to disable logging via filter
+        if (!apply_filters('insertabot_enable_security_logging', true)) {
             return;
         }
-        
+
         $log_entry = array(
             'timestamp' => current_time('mysql'),
             'event' => $event,
@@ -212,14 +214,14 @@ class Insertabot_Security {
             'ip' => self::get_client_ip(),
             'context' => $context
         );
-        
+
         $logs = get_option('insertabot_security_logs', array());
-        
+
         // Keep only last 100 entries
         if (count($logs) >= 100) {
             array_shift($logs);
         }
-        
+
         $logs[] = $log_entry;
         update_option('insertabot_security_logs', $logs, false);
     }
@@ -297,36 +299,40 @@ class Insertabot_Security {
     
     /**
      * Sanitize widget configuration data
-     * 
+     *
      * @param array $config Configuration array
      * @return array Sanitized configuration
      */
     public static function sanitize_widget_config($config) {
         $sanitized = array();
-        
+
         if (isset($config['primary_color'])) {
-            $sanitized['primary_color'] = sanitize_hex_color($config['primary_color']);
+            $color = sanitize_text_field($config['primary_color']);
+            // Validate hex color format (#RRGGBB)
+            if (preg_match('/^#[a-fA-F0-9]{6}$/', $color)) {
+                $sanitized['primary_color'] = $color;
+            }
         }
-        
+
         if (isset($config['position'])) {
             $allowed_positions = array('bottom-right', 'bottom-left', 'top-right', 'top-left');
-            $sanitized['position'] = in_array($config['position'], $allowed_positions) 
-                ? $config['position'] 
+            $sanitized['position'] = in_array($config['position'], $allowed_positions, true)
+                ? $config['position']
                 : 'bottom-right';
         }
-        
+
         if (isset($config['bot_name'])) {
             $sanitized['bot_name'] = sanitize_text_field($config['bot_name']);
         }
-        
+
         if (isset($config['greeting_message'])) {
             $sanitized['greeting_message'] = sanitize_textarea_field($config['greeting_message']);
         }
-        
+
         if (isset($config['system_prompt'])) {
             $sanitized['system_prompt'] = sanitize_textarea_field($config['system_prompt']);
         }
-        
+
         return $sanitized;
     }
 }

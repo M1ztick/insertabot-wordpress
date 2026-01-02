@@ -2,7 +2,7 @@
 Contributors: mistykmedia
 Tags: chatbot, ai, chat, support, customer service
 Requires at least: 5.0
-Tested up to: 6.4
+Tested up to: 6.7
 Stable tag: 1.0.0
 Requires PHP: 7.4
 License: GPLv2 or later
@@ -79,10 +79,46 @@ Add a customizable AI chatbot to your WordPress site. Real-time web search, unli
 * Compatible with page builders (Elementor, Divi, etc.)
 * CDN-hosted for blazing fast performance
 
+== External Services ==
+
+This plugin connects to the Insertabot API service to provide AI chatbot functionality.
+
+**Service URL:** https://api.insertabot.io
+
+**When the chatbot is enabled, the following data is transmitted:**
+* User chat messages and questions
+* Your website URL (for context)
+* API key (for authentication)
+
+**Third-Party Service Information:**
+* Service Provider: Insertabot (https://insertabot.io)
+* Privacy Policy: https://insertabot.io/privacy
+* Terms of Service: https://insertabot.io/terms
+
+The plugin requires an API key from Insertabot to function. You can obtain a free API key by signing up at https://insertabot.io/signup
+
+**Backend Services Used by Insertabot API:**
+* Cloudflare Workers AI (for AI processing)
+* Tavily API (for real-time web search)
+
 == Privacy ==
 
-Insertabot stores minimal, anonymized security logs locally (option `insertabot_security_logs`) to help with diagnostics and security audits. The plugin does **not** expose your API key to clients (the key is stored encrypted) and does not send personal data to third parties beyond what is necessary to deliver chatbot responses to your site. The plugin implements WordPress personal data exporters and erasers so site administrators can export or remove personal data associated with a user (via Tools → Export Personal Data / Erase Personal Data in WordPress).
+**Local Data Storage:**
+Insertabot stores minimal data locally in your WordPress database:
+* Encrypted API key (option: `insertabot_api_key_encrypted`)
+* Plugin settings (enabled/disabled state, API base URL)
+* Optional security logs (option: `insertabot_security_logs`) - anonymized with IP addresses masked
 
+**Data Transmission:**
+When users interact with the chatbot, their messages are sent to the Insertabot API service for processing. The plugin does **not** expose your API key to client browsers (uses short-lived tokens instead).
+
+**GDPR Compliance:**
+The plugin implements WordPress personal data exporters and erasers. Site administrators can export or remove personal data associated with a user via Tools → Export Personal Data / Erase Personal Data in WordPress admin.
+
+**Security:**
+* API keys are stored using AES-256-CBC encryption
+* IP addresses in logs are anonymized (last octet/80 bits zeroed)
+* No personal data is sent to third parties beyond what is necessary for chatbot functionality
 
 ### 🆘 Support
 

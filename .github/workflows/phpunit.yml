@@ -13,8 +13,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup and run PHPUnit
-        uses: 10up/action-phpunit@v1
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          plugin-dir: 'wordpress-plugin/insertabot'
+          extensions: mysqli, zip
+          tools: composer, phpunit
+
+      - name: Install dependencies
+        run: |
+          cd wordpress-plugin/insertabot
+          composer install --no-dev
+
+      - name: Run PHPUnit
+        run: |
+          cd wordpress-plugin/insertabot
+          phpunit

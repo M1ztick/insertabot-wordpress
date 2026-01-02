@@ -22,8 +22,8 @@ final class Insertabot_Admin_Settings {
 
 	public static function add_menu(): void {
 		add_options_page(
-			'Insertabot Settings',
-			'Insertabot',
+			esc_html__('Insertabot Settings', 'insertabot'),
+			esc_html__('Insertabot', 'insertabot'),
 			'manage_options',
 			self::PAGE_SLUG,
 			[__CLASS__, 'render_page']
@@ -58,7 +58,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_KEY,
-			'API Key',
+			esc_html__('API Key', 'insertabot'),
 			[__CLASS__, 'field_api_key'],
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -66,7 +66,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_EN,
-			'Enable Chatbot',
+			esc_html__('Enable Chatbot', 'insertabot'),
 			[__CLASS__, 'field_enabled'],
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -74,7 +74,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_BASE,
-			'API Base URL',
+			esc_html__('API Base URL', 'insertabot'),
 			[__CLASS__, 'field_api_base'],
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -105,7 +105,7 @@ final class Insertabot_Admin_Settings {
 			add_settings_error(
 				'insertabot_settings_messages',
 				'insertabot_invalid_key',
-				'Invalid API key format.',
+				esc_html__('Invalid API key format.', 'insertabot'),
 				'error'
 			);
 			return '';
@@ -118,7 +118,7 @@ final class Insertabot_Admin_Settings {
 				add_settings_error(
 					'insertabot_settings_messages',
 					'insertabot_store_failed',
-					'Failed to securely store API key.',
+					esc_html__('Failed to securely store API key.', 'insertabot'),
 					'error'
 				);
 				return '';
@@ -140,7 +140,7 @@ final class Insertabot_Admin_Settings {
 			add_settings_error(
 				'insertabot_settings_messages',
 				'insertabot_enabled_no_key',
-				'API key required before enabling chatbot.',
+				esc_html__('API key required before enabling chatbot.', 'insertabot'),
 				'error'
 			);
 			return false;
@@ -200,17 +200,17 @@ final class Insertabot_Admin_Settings {
 			<p class="description">
 				<?php if ($signup) : ?>
 					<a href="<?php echo esc_url($signup); ?>" target="_blank" rel="noopener noreferrer">
-						<strong>Get a free API key →</strong>
+						<strong><?php esc_html_e('Get a free API key →', 'insertabot'); ?></strong>
 					</a>
 				<?php else : ?>
-					<strong>Insertabot website URL not configured.</strong>
+					<strong><?php esc_html_e('Insertabot website URL not configured.', 'insertabot'); ?></strong>
 				<?php endif; ?>
 			</p>
 		<?php else : ?>
 			<p class="description">
-				API key connected. <code><?php echo esc_html($masked); ?></code>
+				<?php esc_html_e('API key connected.', 'insertabot'); ?> <code><?php echo esc_html($masked); ?></code>
 				<?php if ($dash) : ?>
-					<a href="<?php echo esc_url($dash); ?>" target="_blank" rel="noopener noreferrer">View dashboard →</a>
+					<a href="<?php echo esc_url($dash); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('View dashboard →', 'insertabot'); ?></a>
 				<?php endif; ?>
 			</p>
 		<?php endif; ?>
@@ -251,7 +251,7 @@ final class Insertabot_Admin_Settings {
 			class="regular-text code"
 			placeholder="https://api.example.com"
 		/>
-		<p class="description">Advanced: Change only when using a custom API endpoint.</p>
+		<p class="description"><?php esc_html_e('Advanced: Change only when using a custom API endpoint.', 'insertabot'); ?></p>
 		<?php
 	}
 

@@ -28,6 +28,7 @@ define('INSERTABOT_WEBSITE_URL', 'https://insertabot.io');
 
 // Load required includes
 require_once INSERTABOT_PLUGIN_DIR . 'includes/class-security.php';
+require_once INSERTABOT_PLUGIN_DIR . 'includes/admin-settings.php';
 require_once INSERTABOT_PLUGIN_DIR . 'includes/rest.php';
 require_once INSERTABOT_PLUGIN_DIR . 'includes/privacy.php';
 
@@ -64,70 +65,33 @@ class Insertabot_Plugin {
      * Initialize WordPress hooks
      */
     private function init_hooks() {
-        // Admin menu
-        add_action('admin_menu', array($this, 'add_admin_menu'));
-        
-        // Settings
-        add_action('admin_init', array($this, 'register_settings'));
-        
+        // Initialize admin settings
+        if (class_exists('Insertabot_Admin_Settings')) {
+            Insertabot_Admin_Settings::register();
+        }
+
         // Enqueue admin styles
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_styles'));
-        
+
         // Add widget script to frontend
         add_action('wp_footer', array($this, 'add_widget_script'));
-        
+
         // Register shortcode
         add_shortcode('insertabot', array($this, 'shortcode_handler'));
-        
+
         // Add settings link on plugins page
         add_filter('plugin_action_links_' . plugin_basename(__FILE__), array($this, 'add_settings_link'));
-    }
-    
-    /**
-     * Add admin menu
-     */
-    public function add_admin_menu() {
-        add_menu_page(
-            'Insertabot Settings',
-            'Insertabot',
-            'manage_options',
-            'insertabot',
-            array($this, 'render_settings_page'),
-            'dashicons-format-chat',
-            80
-        );
-    }
-    
-    /**
-     * Register plugin settings
-     */
-    public function register_settings() {
-        register_setting('insertabot_settings', 'insertabot_api_key', array(
-            'type' => 'string',
-            'sanitize_callback' => 'sanitize_text_field',
-            'default' => ''
-        ));
-        
-        register_setting('insertabot_settings', 'insertabot_enabled', array(
-            'type' => 'boolean',
-            'default' => false
-        ));
-        
-        register_setting('insertabot_settings', 'insertabot_api_base', array(
-            'type' => 'string',
-            'sanitize_callback' => 'esc_url_raw',
-            'default' => INSERTABOT_API_URL
-        ));
     }
     
     /**
      * Enqueue admin styles
      */
     public function enqueue_admin_styles($hook) {
-        if ('toplevel_page_insertabot' !== $hook) {
+        // Check for both menu page slugs (top-level menu and settings submenu)
+        if ('toplevel_page_insertabot' !== $hook && 'settings_page_insertabot-settings' !== $hook) {
             return;
         }
-        
+
         wp_enqueue_style(
             'insertabot-admin',
             INSERTABOT_PLUGIN_URL . 'assets/admin.css',
@@ -185,16 +149,9 @@ class Insertabot_Plugin {
      * Add settings link on plugins page
      */
     public function add_settings_link($links) {
-        $settings_link = '<a href="' . admin_url('admin.php?page=insertabot') . '">Settings</a>';
+        $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=insertabot-settings')) . '">' . esc_html__('Settings', 'insertabot') . '</a>';
         array_unshift($links, $settings_link);
         return $links;
-    }
-    
-    /**
-     * Render settings page
-     */
-    public function render_settings_page() {
-        include INSERTABOT_PLUGIN_DIR . 'includes/admin-settings.php';
     }
 }
 
