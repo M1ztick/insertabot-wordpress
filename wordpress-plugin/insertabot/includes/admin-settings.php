@@ -3,51 +3,82 @@
  * Insertabot Admin Settings (Settings API)
  *
  * Drop-in file. Include from main plugin bootstrap.
+ *
+ * @package Insertabot
  */
 
-if (!defined('ABSPATH')) {
+if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+// Suppress IDE warnings for WordPress functions
+if ( ! function_exists( 'add_action' ) ) {
+	return;
+}
+
+/**
+ * Insertabot Admin Settings Class
+ */
 final class Insertabot_Admin_Settings {
 	public const PAGE_SLUG   = 'insertabot-settings';
 	public const OPTION_KEY  = 'insertabot_api_key';
 	public const OPTION_EN   = 'insertabot_enabled';
 	public const OPTION_BASE = 'insertabot_api_base';
 
-	public static function register(): void {
-		add_action('admin_menu', [__CLASS__, 'add_menu']);
-		add_action('admin_init', [__CLASS__, 'register_settings']);
+	/**
+	 * Register admin hooks
+	 */
+	public static function register() {
+		add_action( 'admin_menu', array( __CLASS__, 'add_menu' ) );
+		add_action( 'admin_init', array( __CLASS__, 'register_settings' ) );
 	}
 
-	public static function add_menu(): void {
+	/**
+	 * Add admin menu
+	 */
+	public static function add_menu() {
 		add_options_page(
-			esc_html__('Insertabot Settings', 'insertabot'),
-			esc_html__('Insertabot', 'insertabot'),
+			esc_html__( 'Insertabot Settings', 'insertabot' ),
+			esc_html__( 'Insertabot', 'insertabot' ),
 			'manage_options',
 			self::PAGE_SLUG,
-			[__CLASS__, 'render_page']
+			array( __CLASS__, 'render_page' )
 		);
 	}
 
-	public static function register_settings(): void {
-		register_setting('insertabot_settings_group', self::OPTION_KEY, [
-			'type'              => 'string',
-			'sanitize_callback' => [__CLASS__, 'sanitize_api_key'],
-			'default'           => '',
-		]);
+	/**
+	 * Register settings
+	 */
+	public static function register_settings() {
+		register_setting(
+			'insertabot_settings_group',
+			self::OPTION_KEY,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_api_key' ),
+				'default'           => '',
+			)
+		);
 
-		register_setting('insertabot_settings_group', self::OPTION_BASE, [
-			'type'              => 'string',
-			'sanitize_callback' => [__CLASS__, 'sanitize_api_base'],
-			'default'           => defined('INSERTABOT_API_URL') ? INSERTABOT_API_URL : '',
-		]);
+		register_setting(
+			'insertabot_settings_group',
+			self::OPTION_BASE,
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_api_base' ),
+				'default'           => defined( 'INSERTABOT_API_URL' ) ? INSERTABOT_API_URL : '',
+			)
+		);
 
-		register_setting('insertabot_settings_group', self::OPTION_EN, [
-			'type'              => 'boolean',
-			'sanitize_callback' => [__CLASS__, 'sanitize_enabled'],
-			'default'           => false,
-		]);
+		register_setting(
+			'insertabot_settings_group',
+			self::OPTION_EN,
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => array( __CLASS__, 'sanitize_enabled' ),
+				'default'           => false,
+			)
+		);
 
 		add_settings_section(
 			'insertabot_main_section',
@@ -58,24 +89,24 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_KEY,
-			esc_html__('API Key', 'insertabot'),
-			[__CLASS__, 'field_api_key'],
+			esc_html__( 'API Key', 'insertabot' ),
+			array( __CLASS__, 'field_api_key' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
 		);
 
 		add_settings_field(
 			self::OPTION_EN,
-			esc_html__('Enable Chatbot', 'insertabot'),
-			[__CLASS__, 'field_enabled'],
+			esc_html__( 'Enable Chatbot', 'insertabot' ),
+			array( __CLASS__, 'field_enabled' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
 		);
 
 		add_settings_field(
 			self::OPTION_BASE,
-			esc_html__('API Base URL', 'insertabot'),
-			[__CLASS__, 'field_api_base'],
+			esc_html__( 'API Base URL', 'insertabot' ),
+			array( __CLASS__, 'field_api_base' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
 		);
