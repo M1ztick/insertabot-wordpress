@@ -1,5 +1,5 @@
 === Insertabot - AI Chatbot Solution ===
-Contributors: Andrew "Mistyk" Moritz (mistyk.link), A.K.A. M1styk, M1ztick (github.com/M1ztick), or Mistyk Media (mistykmedia.com)
+Contributors: mistykmedia
 Tags: chatbot, ai, chat, support, customer service
 Requires at least: 5.0
 Tested up to: 6.7
@@ -20,11 +20,11 @@ Add a customizable AI chatbot to your WordPress site. Real-time web search, unli
 * **Lightning Fast Setup** - Install plugin, add API key, done! Takes under 5 minutes
 * **Fully Customizable** - Match your brand colors, greeting message, and bot personality
 * **Mobile Optimized** - Beautiful chat experience on all devices
-* **Free to Start** - 20 messages per day for deployed AI chatbot and 50 playground interactions, no credit card required
+* **Free to Start** - 50 messages per day, no credit card required
 
 ### ✨ Key Features
 
-*  **AI-Powered Conversations** - Smart, natural responses to visitor questions
+* 🤖 **AI-Powered Conversations** - Smart, natural responses to visitor questions
 * 🌐 **Real-Time Web Search** - Always up-to-date answers (not outdated training data)
 * 🎨 **Full Customization** - Colors, branding, greeting messages
 * 📱 **Mobile-Friendly Widget** - Works perfectly on phones and tablets
@@ -34,7 +34,7 @@ Add a customizable AI chatbot to your WordPress site. Real-time web search, unli
 ### 💰 Pricing
 
 **Free Plan**
-* 20 deployed chatbot messages per day + 50 playground interactions
+* 50 messages per day
 * Real-time web search
 * Basic customization
 * Mobile-optimized widget

@@ -1,0 +1,33 @@
+<!-- insertabot-bot.svg -->
+<svg
+  width="300"
+  height="300"
+  viewBox="0 0 300 300"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-labelledby="insertabotTitle"
+>
+  <title id="insertabotTitle">Insertabot chatbot illustration</title>
+
+  <!-- Head -->
+  <circle cx="150" cy="150" r="100" fill="currentColor" opacity="0.18" />
+  <circle cx="150" cy="150" r="100" stroke="currentColor" stroke-width="3" />
+
+  <!-- Eyes -->
+  <circle cx="130" cy="130" r="10" fill="currentColor" />
+  <circle cx="170" cy="130" r="10" fill="currentColor" />
+
+  <!-- Smile -->
+  <path
+    d="M120 170 Q150 190 180 170"
+    stroke="currentColor"
+    stroke-width="4"
+    stroke-linecap="round"
+  />
+
+  <!-- Antenna / UI bars -->
+  <rect x="100" y="50" width="100" height="10" rx="5" fill="currentColor" opacity="0.28" />
+  <rect x="110" y="70" width="80" height="8" rx="4" fill="currentColor" opacity="0.28" />
+  <rect x="120" y="85" width="60" height="6" rx="3" fill="currentColor" opacity="0.28" />
+</svg>
