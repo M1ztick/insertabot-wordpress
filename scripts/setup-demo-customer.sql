@@ -18,7 +18,7 @@ INSERT OR REPLACE INTO customers (
   'demo-customer-001',
   'demo@insertabot.mistyk.media',
   'Mistyk Media (Demo)',
-  'ib_sk_demo_REPLACE',
+  'ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f',
   'free',
   'active',
   100,

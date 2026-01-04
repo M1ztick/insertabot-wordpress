@@ -292,8 +292,8 @@ export function getPlaygroundHTML(origin: string): string {
 
     <script>
         const API_ENDPOINT = '${origin}/v1/chat/completions';
-        // Replace with your API key for local testing or set via environment before embedding
-        const API_KEY = 'ib_sk_demo_REPLACE';
+        // Demo API key - automatically configured for the playground
+        const API_KEY = 'ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f';
         const QUOTA_MAX = 50;
         const STORAGE_KEY = 'playground_quota';
 
