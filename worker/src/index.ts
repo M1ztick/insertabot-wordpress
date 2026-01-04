@@ -351,13 +351,16 @@ async function handleChatRequest(
       });
     }
 
+    // Extract text content from the message (handles both string and multimodal content)
+    const textContent = extractTextFromMessage(userMessage.content);
+
     let ragContext = "";
     if (customerConfig.rag_enabled && env.VECTORIZE) {
       const contextResults = await getRelevantContext(
         env,
         env.DB,
         customerId,
-        userMessage.content
+        textContent
       );
       if (contextResults.length > 0) {
         ragContext = `\n\nRelevant context:\n${contextResults.join("\n\n")}`;
@@ -365,18 +368,17 @@ async function handleChatRequest(
     }
 
     let searchContext = "";
-    const textContent = extractTextFromMessage(userMessage.content);
     const shouldSearch = shouldPerformSearch(textContent);
 
     if (env.TAVILY_API_KEY && shouldSearch) {
       logger.info("Triggering web search", {
-        query: userMessage.content.substring(0, 100),
+        query: textContent.substring(0, 100),
         customerId,
       });
 
       try {
         const searchResults = await performWebSearch(
-          userMessage.content,
+          textContent,
           env.TAVILY_API_KEY,
           5
         );
@@ -468,13 +470,13 @@ async function handleChatRequest(
         model: widgetConfig.model,
         usage: {
           prompt_tokens: messages.reduce(
-            (acc, m) => acc + m.content.split(/\s+/).length,
+            (acc, m) => acc + extractTextFromMessage(m.content).split(/\s+/).length,
             0
           ),
           completion_tokens: responseText.split(/\s+/).length,
           total_tokens:
             messages.reduce(
-              (acc, m) => acc + m.content.split(/\s+/).length,
+              (acc, m) => acc + extractTextFromMessage(m.content).split(/\s+/).length,
               0
             ) + responseText.split(/\s+/).length,
         },

@@ -162,5 +162,5 @@ export async function validateTenant(
     throw new Error('Invalid API key');
   }
 
-  return result.customer_id;
+  return result.customer_id as string;
 }
