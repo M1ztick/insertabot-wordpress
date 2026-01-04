@@ -8,7 +8,7 @@
     "dev:worker": "cd worker && wrangler dev",
     "deploy": "wrangler deploy --config worker/wrangler.toml",
     "test": "node dev-server.js --port 8080",
-    "prepare": "husky install",
+    "prepare": "husky install || true",
     "lint:secrets": "secretlint --config .secretlintrc.json \"**/*\" --max-warnings 0",
     "scan:secrets": "npm run lint:secrets"
   },
@@ -24,7 +24,7 @@
   "devDependencies": {
     "wrangler": "^4.47.0",
     "husky": "^8.0.0",
-    "secretlint": "^6.0.0",
-    "@secretlint/secretlint-rule-preset-recommended": "^6.0.0"
+    "secretlint": "^11.2.5",
+    "@secretlint/secretlint-rule-preset-recommend": "^11.2.5"
   }
 }
