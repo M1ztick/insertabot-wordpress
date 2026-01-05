@@ -46,7 +46,7 @@ In production environments (`ENVIRONMENT=production`), the global `CORS_ORIGINS`
 CORS_ORIGINS="*"  // ❌ Not allowed
 
 // This is correct
-CORS_ORIGINS="https://insertabot.mistyk.media"  // ✅ Allowed
+CORS_ORIGINS="https://insertabot.io"  // ✅ Allowed
 ```
 
 ## Configuration
@@ -69,7 +69,7 @@ Set the global CORS configuration in `wrangler.toml`:
 ```toml
 [env.production.vars]
 ENVIRONMENT = "production"
-CORS_ORIGINS = "https://insertabot.mistyk.media"
+CORS_ORIGINS = "https://insertabot.io"
 
 [env.development.vars]
 ENVIRONMENT = "development"
@@ -92,13 +92,13 @@ CORS_ORIGINS = "*"
 curl -H "Origin: https://example.com" \
      -H "X-API-Key: your_api_key" \
      -X OPTIONS \
-     https://insertabot.mistyk.media/v1/chat/completions
+     https://api.insertabot.io/v1/chat/completions
 
 # Should fail with 403
 curl -H "Origin: https://unauthorized.com" \
      -H "X-API-Key: your_api_key" \
      -X OPTIONS \
-     https://insertabot.mistyk.media/v1/chat/completions
+     https://api.insertabot.io/v1/chat/completions
 ```
 
 ### Update Allowed Domains

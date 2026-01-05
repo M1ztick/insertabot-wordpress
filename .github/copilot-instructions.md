@@ -4,7 +4,6 @@ Short, actionable guidance so an AI coding agent becomes productive quickly in t
 
 ## Big picture
 - **Production domain**: `https://insertabot.io` (API at `https://api.insertabot.io`, CDN at `https://cdn.insertabot.io`)
-- **Legacy domain**: `https://insertabot.mistyk.media` (being phased out)
 - Two primary components:
   - `worker/` — Cloudflare Workers TypeScript API (multi-tenant, D1 DB, Vectorize, KV, AI binding).
   - `widget/` — Embeddable client (vanilla JS); simple script tag integration and demo (`widget/demo.html`).

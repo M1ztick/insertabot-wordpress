@@ -1,5 +1,5 @@
 -- Insertabot Demo Customer Setup Script
--- Run this against your D1 database to setup the demo for insertabot.mistyk.media
+-- Run this against your D1 database to setup the demo for insertabot.io
 
 -- 1. Create demo customer with API key that matches landing page
 INSERT OR REPLACE INTO customers (
@@ -16,7 +16,7 @@ INSERT OR REPLACE INTO customers (
   updated_at
 ) VALUES (
   'demo-customer-001',
-  'demo@insertabot.mistyk.media',
+  'demo@insertabot.io',
   'Mistyk Media (Demo)',
   'ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f',
   'free',
@@ -56,7 +56,7 @@ INSERT OR REPLACE INTO widget_configs (
   0.7,
   500,
   'You are a helpful, friendly AI assistant demonstrating the Insertabot platform. You help users understand how AI chatbots work, answer questions about the platform, and engage in casual conversation. Be concise, friendly, and helpful. If asked about technical details, explain them clearly.',
-  'https://insertabot.mistyk.media,https://insertabot-api.mistykmedia.workers.dev,http://localhost:8787,*',
+  'https://insertabot.io,https://api.insertabot.io,http://localhost:8787,*',
   'Type your message...',
   1,
   CURRENT_TIMESTAMP,

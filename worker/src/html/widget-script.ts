@@ -23,8 +23,8 @@ export function getWidgetScript(apiOrigin: string): string {
         console.error('           data-api-key="YOUR_API_KEY_HERE"></script>');
         console.error("");
         console.error("🔑 Get your API key:");
-        console.error("   → Sign up at: https://insertabot.mistyk.media/signup");
-        console.error("   → Or visit dashboard: https://insertabot.mistyk.media/dashboard");
+        console.error("   → Sign up at: https://insertabot.io/signup");
+        console.error("   → Or visit dashboard: https://insertabot.io/dashboard");
         console.error("");
         console.error("💡 Need help? Check the docs:");
         console.error("   https://github.com/M1ztick/insertabot_by_mistyk_media/blob/main/SETUP_GUIDE.md");

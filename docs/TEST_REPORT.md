@@ -198,7 +198,7 @@ $ node generate-api-key.js 3
 
 ✅ **Demo Customer:**
 - ID: `cust_demo_001`
-- Email: `demo@mistyk.media`
+- Email: `demo@insertabot.io`
 - API Key: `ib_sk_demo_12345678901234567890123456789012`
 - Plan: Pro
 - Rate Limits: 1000/hour, 10000/day

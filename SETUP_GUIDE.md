@@ -1,6 +1,6 @@
 # Insertabot Setup and Troubleshooting Guide
 
-## Current Issue: Chatbot Not Working on insertabot.mistyk.media
+## Current Issue: Chatbot Not Working on insertabot.io
 
 This guide will help you fix the chatbot on your main site.
 
@@ -89,7 +89,7 @@ INSERT INTO widget_configs (
   0.7,
   500,
   'You are a helpful AI assistant.',
-  'https://insertabot.mistyk.media',
+  'https://insertabot.io',
   'Type your message...',
   1
 );
@@ -102,13 +102,13 @@ INSERT INTO widget_configs (
 ### Your allowed_domains must include your site:
 
 ```sql
-UPDATE widget_configs 
-SET allowed_domains = 'https://insertabot.mistyk.media'
+UPDATE widget_configs
+SET allowed_domains = 'https://insertabot.io'
 WHERE customer_id = 'YOUR_CUSTOMER_ID_HERE';
 
 -- For development, you can allow multiple domains:
-UPDATE widget_configs 
-SET allowed_domains = 'https://insertabot.mistyk.media,http://localhost:3000'
+UPDATE widget_configs
+SET allowed_domains = 'https://insertabot.io,http://localhost:3000'
 WHERE customer_id = 'YOUR_CUSTOMER_ID_HERE';
 ```
 
@@ -116,7 +116,7 @@ WHERE customer_id = 'YOUR_CUSTOMER_ID_HERE';
 
 ```toml
 [vars]
-CORS_ORIGINS = "https://insertabot.mistyk.media"
+CORS_ORIGINS = "https://insertabot.io"
 ```
 
 **IMPORTANT:** After changing `wrangler.toml`, you MUST redeploy:
@@ -169,10 +169,10 @@ INSERT INTO customers (
 
 ```html
 <!-- Insertabot Widget -->
-<script 
-  src="https://insertabot.mistyk.media/widget.js" 
+<script
+  src="https://insertabot.io/widget.js"
   data-api-key="YOUR_API_KEY_HERE"
-  data-api-base="https://insertabot.mistyk.media"
+  data-api-base="https://api.insertabot.io"
 ></script>
 ```
 
@@ -205,7 +205,7 @@ npm install
 npm run deploy
 
 # 3. Verify deployment
-curl https://insertabot.mistyk.media/health
+curl https://api.insertabot.io/health
 ```
 
 ---
@@ -215,7 +215,7 @@ curl https://insertabot.mistyk.media/health
 ### Test 1: Check API Health
 
 ```bash
-curl https://insertabot.mistyk.media/health
+curl https://api.insertabot.io/health
 ```
 
 **Expected response:**
@@ -234,7 +234,7 @@ curl https://insertabot.mistyk.media/health
 
 ```bash
 curl -H "X-API-Key: YOUR_API_KEY" \
-     https://insertabot.mistyk.media/v1/widget/config
+     https://api.insertabot.io/v1/widget/config
 ```
 
 **Expected response (after this fix):**
@@ -256,15 +256,15 @@ curl -H "X-API-Key: YOUR_API_KEY" \
 ### Test 3: Check CORS
 
 ```bash
-curl -H "Origin: https://insertabot.mistyk.media" \
+curl -H "Origin: https://insertabot.io" \
      -H "X-API-Key: YOUR_API_KEY" \
      -v \
-     https://insertabot.mistyk.media/v1/widget/config
+     https://api.insertabot.io/v1/widget/config
 ```
 
 **Look for this header in response:**
 ```
-Access-Control-Allow-Origin: https://insertabot.mistyk.media
+Access-Control-Allow-Origin: https://insertabot.io
 ```
 
 #### Automated CORS test script
@@ -274,7 +274,7 @@ There is a convenience script to run a preflight check plus simple GET/POST chec
 ```bash
 # Make it executable first: chmod +x scripts/test-cors.sh
 # Usage: scripts/test-cors.sh [WORKER_URL] [ORIGIN] [API_KEY]
-scripts/test-cors.sh https://insertabot.mistyk.media https://your-site.example ib_sk_...
+scripts/test-cors.sh https://api.insertabot.io https://your-site.example ib_sk_...
 ```
 
 The script performs:
@@ -332,7 +332,7 @@ If any step fails, the script exits non-zero and prints the headers/body to help
 **Never commit real API keys or secrets to the repository.** Use these recommended patterns for local testing and worker secrets:
 
 - **Set a local environment variable (temporary):**
-  - DEMO_API_KEY=ib_sk_xxx ./scripts/test-cors.sh https://insertabot.mistyk.media https://your-site.example $DEMO_API_KEY
+  - DEMO_API_KEY=ib_sk_xxx ./scripts/test-cors.sh https://api.insertabot.io https://your-site.example $DEMO_API_KEY
   - Or interactively: `read -s DEMO_API_KEY; ./scripts/test-cors.sh <worker> <origin> $DEMO_API_KEY; unset DEMO_API_KEY`
 - **Store secrets for your Worker runtime:**
   - `wrangler secret put DEMO_API_KEY` (enter key when prompted)
@@ -368,7 +368,7 @@ Then try to load your site and watch for errors.
 
 ### Check Browser Console:
 
-1. Open your site: https://insertabot.mistyk.media/
+1. Open your site: https://insertabot.io/
 2. Press F12 to open DevTools
 3. Go to Console tab
 4. Look for Insertabot errors
