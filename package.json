@@ -22,9 +22,10 @@
   "author": "Mistyk Media",
   "license": "MIT",
   "devDependencies": {
-    "wrangler": "^4.47.0",
+    "@cloudflare/workers-types": "^4.20260103.0",
+    "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
     "husky": "^8.0.0",
     "secretlint": "^11.2.5",
-    "@secretlint/secretlint-rule-preset-recommend": "^11.2.5"
+    "wrangler": "^4.47.0"
   }
 }
