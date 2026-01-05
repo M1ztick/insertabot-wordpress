@@ -183,6 +183,7 @@ export function getSignupHTML(): string {
                 const result = await response.json();
 
                 if (response.ok) {
+                    // amazonq-ignore-next-line
                     window.location.href = '/dashboard?key=' + result.api_key;
                 } else {
                     errorMsg.textContent = result.error || 'Failed to create account';

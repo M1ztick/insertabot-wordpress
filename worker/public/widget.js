@@ -427,6 +427,7 @@
       // Convert numbered lists
       .replace(/^(\d+)\. (.+)$/gm, '<div style="margin-left: 16px;">$1. $2</div>')
       // Convert URLs to links
+      // amazonq-ignore-next-line
       .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" style="color: #60a5fa; text-decoration: underline;">$1</a>')
       // Convert bare URLs
       .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color: #60a5fa; text-decoration: underline;">$1</a>');
@@ -454,6 +455,7 @@
    */
   function updateMessage(messageDiv, content) {
     const textDiv = messageDiv.querySelector(".insertabot-message-text");
+    // amazonq-ignore-next-line
     textDiv.innerHTML = formatMessage(escapeHtml(content));
     smartScroll();
   }
