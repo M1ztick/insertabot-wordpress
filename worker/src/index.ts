@@ -105,18 +105,30 @@ const SECURITY_HEADERS: HeadersInit = {
 
 // Validate origin against customer's allowed domains
 function isOriginAllowed(origin: string, allowedDomains: string | null): boolean {
-  if (!allowedDomains) return false;
-  const domains = allowedDomains.split(',').map(d => d.trim());
-  return domains.some(domain => {
-    if (domain === '*') return true;
-    if (domain === origin) return true;
-    // Support wildcard subdomains: *.example.com
-    if (domain.startsWith('*.')) {
-      const baseDomain = domain.slice(2);
-      return origin.endsWith(baseDomain);
-    }
+  // Validate inputs
+  if (!origin || typeof origin !== 'string') return false;
+  if (!allowedDomains || typeof allowedDomains !== 'string') return false;
+
+  try {
+    const domains = allowedDomains.split(',').map(d => d.trim()).filter(d => d.length > 0);
+    return domains.some(domain => {
+      if (domain === '*') return true;
+      if (domain === origin) return true;
+      // Support wildcard subdomains: *.example.com
+      if (domain.startsWith('*.')) {
+        const baseDomain = domain.slice(2);
+        // Validate baseDomain is not empty
+        if (!baseDomain || baseDomain.length === 0) return false;
+        // Must be exact match OR end with .baseDomain to prevent maliciousexample.com matching example.com
+        return origin === baseDomain || origin.endsWith('.' + baseDomain);
+      }
+      return false;
+    });
+  } catch (error) {
+    // Log error and return false to deny access on any parsing errors
+    console.error('Error validating origin:', error);
     return false;
-  });
+  }
 }
 
 // CORS helper with Vary header for proper caching

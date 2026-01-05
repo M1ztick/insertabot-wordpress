@@ -258,7 +258,7 @@
         ${
           widgetConfig.show_branding
             ? `<div style="text-align: center; margin-top: 8px; font-size: 11px; color: #9ca3af;">
-               Powered by <a href="https://insertabot.io" target="_blank" style="color: ${widgetConfig.primary_color}; text-decoration: none;">Insertabot</a>
+               Powered by <a href="https://insertabot.io" target="_blank" style="color: ${escapeHtmlAttr(widgetConfig.primary_color)}; text-decoration: none;">Insertabot</a>
              </div>`
             : ""
         }
@@ -310,12 +310,12 @@
         background: rgba(0,0,0,0.8) !important;
       }
       .insertabot-message-user .insertabot-message-content {
-        background: ${widgetConfig.primary_color};
+        background: ${escapeHtmlAttr(widgetConfig.primary_color)};
         color: white;
         border: none;
       }
       #insertabot-input:focus {
-        border-color: ${widgetConfig.primary_color};
+        border-color: ${escapeHtmlAttr(widgetConfig.primary_color)};
       }
       #insertabot-input::placeholder {
         color: #6b7280;
@@ -522,19 +522,36 @@
       stream: true,
     };
 
-    const response = await fetch(`${API_BASE}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-API-Key": API_KEY,
-      },
-      body: JSON.stringify(requestBody),
-      signal: abortController.signal,
-    });
+    let response;
+    try {
+      response = await fetch(`${API_BASE}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [API_CREDENTIAL_HEADER]: API_CREDENTIAL,
+        },
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal,
+      });
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Request was cancelled');
+      } else if (error.name === 'TypeError') {
+        throw new Error('Network error - please check your connection');
+      } else {
+        throw new Error('Failed to connect to chat service');
+      }
+    }
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || "Request failed");
+      let errorMessage = 'Request failed';
+      try {
+        const error = await response.json();
+        errorMessage = error.error || error.message || `HTTP ${response.status}: ${response.statusText}`;
+      } catch (e) {
+        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      }
+      throw new Error(errorMessage);
     }
 
     // Handle streaming response
@@ -545,7 +562,15 @@
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        let readResult;
+        try {
+          readResult = await reader.read();
+        } catch (readError) {
+          log.error("Stream read error:", readError);
+          throw new Error('Connection interrupted - please try again');
+        }
+        
+        const { done, value } = readResult;
         if (done) break;
 
         const chunk = decoder.decode(value, { stream: true });
@@ -571,6 +596,7 @@
               }
             } catch (e) {
               log.error("Failed to parse chunk:", e);
+              // Continue processing other chunks instead of failing
             }
           }
         }
@@ -583,8 +609,16 @@
     } catch (error) {
       if (error.name === "AbortError") {
         log.info("Request aborted");
+        throw new Error('Request was cancelled');
       } else {
-        throw error;
+        log.error("Streaming error:", error);
+        throw new Error('Error receiving response - please try again');
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch (e) {
+        // Ignore cleanup errors
       }
     }
   }

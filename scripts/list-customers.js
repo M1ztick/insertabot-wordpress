@@ -82,7 +82,14 @@ async function listCustomers(target = 'production') {
     console.log('Customer data found. For detailed view, check the Cloudflare dashboard or run specific queries.');
     
   } catch (error) {
-    console.error('Error fetching customers:', error.message);
+    if (error.code === 'ENOENT') {
+      console.error('❌ Error: wrangler command not found. Please install Cloudflare CLI.');
+    } else if (error.status === 1) {
+      console.error('❌ Database error: Check if database exists and you have proper permissions.');
+    } else {
+      console.error('❌ Error fetching customers:', error.message);
+    }
+    process.exit(1);
   }
 }
 
@@ -122,7 +129,14 @@ async function getCustomerDetails(customerId, target = 'production') {
     console.log(usageOutput);
     
   } catch (error) {
-    console.error('Error fetching customer details:', error.message);
+    if (error.code === 'ENOENT') {
+      console.error('❌ Error: wrangler command not found. Please install Cloudflare CLI.');
+    } else if (error.status === 1) {
+      console.error('❌ Database error: Customer not found or database access denied.');
+    } else {
+      console.error('❌ Error fetching customer details:', error.message);
+    }
+    process.exit(1);
   }
 }
 
@@ -163,8 +177,17 @@ async function main() {
         const dbName = target === 'development' ? 'insertabot-development' : 'insertabot-production';
         const localFlag = target === 'development' ? '--local' : '';
         const command = `cd worker && wrangler d1 execute ${dbName} ${localFlag} --command="${usageQuery}"`;
-        const output = execSync(command, { encoding: 'utf8' });
-        console.log(output);
+        try {
+          const output = execSync(command, { encoding: 'utf8' });
+          console.log(output);
+        } catch (error) {
+          if (error.code === 'ENOENT') {
+            console.error('❌ Error: wrangler command not found. Please install Cloudflare CLI.');
+          } else {
+            console.error('❌ Error fetching usage statistics:', error.message);
+          }
+          return;
+        }
         break;
         
       case '4':
@@ -187,12 +210,21 @@ async function main() {
         const exportDbName = target === 'development' ? 'insertabot-development' : 'insertabot-production';
         const exportLocalFlag = target === 'development' ? '--local' : '';
         const exportCommand = `cd worker && wrangler d1 execute ${exportDbName} ${exportLocalFlag} --command="${exportQuery}"`;
-        const exportOutput = execSync(exportCommand, { encoding: 'utf8' });
-        
-        const fs = require('fs');
-        const filename = `customer-export-${new Date().toISOString().split('T')[0]}.csv`;
-        fs.writeFileSync(filename, exportOutput);
-        console.log(`✅ Data exported to ${filename}`);
+        try {
+          const exportOutput = execSync(exportCommand, { encoding: 'utf8' });
+          
+          const fs = require('fs');
+          const filename = `customer-export-${new Date().toISOString().split('T')[0]}.csv`;
+          fs.writeFileSync(filename, exportOutput);
+          console.log(`✅ Data exported to ${filename}`);
+        } catch (error) {
+          if (error.code === 'ENOENT') {
+            console.error('❌ Error: wrangler command not found. Please install Cloudflare CLI.');
+          } else {
+            console.error('❌ Error exporting data:', error.message);
+          }
+          return;
+        }
         break;
         
       default:

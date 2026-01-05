@@ -32,7 +32,7 @@ Short, actionable guidance so an AI coding agent becomes productive quickly in t
   - Create KV namespace: `wrangler kv:namespace create RATE_LIMITER`
   - Create Vectorize index: `wrangler vectorize create insertabot-embeddings --dimensions=768 --metric=cosine`
 - Secrets: set via `wrangler secret put STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / `TAVILY_API_KEY`.
-- Tests: API smoke tests: `node scripts/test-api.js http://localhost:8787 ib_sk_demo_...` (script includes streaming example). WordPress tests live under `wordpress-plugin/insertabot/tests` (use your normal PHPUnit workflow there).
+- Tests: API smoke tests: `node scripts/test-api.js http://localhost:8787 <your-api-key>` (script includes streaming example). WordPress tests live under `wordpress-plugin/insertabot/tests` (use your normal PHPUnit workflow there).
 
 ## Conventions & important patterns (do not change lightly)
 - API key format: must start with `ib_sk_` (validated in `validation.ts` and `class-security.php`): regex example `^ib_sk_[a-zA-Z0-9_]+$`.
