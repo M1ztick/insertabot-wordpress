@@ -14,6 +14,53 @@ export function getLandingHTML(origin: string): string {
             background: #000000;
             color: #e2e8f0;
         }
+        nav {
+            background: rgba(10, 10, 10, 0.95);
+            border-bottom: 1px solid rgba(0, 245, 255, 0.2);
+            padding: 20px 40px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        }
+        nav .logo {
+            font-size: 24px;
+            font-weight: bold;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        nav .nav-links {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+        nav a {
+            color: #94a3b8;
+            text-decoration: none;
+            transition: all 0.2s;
+            font-size: 15px;
+        }
+        nav a:hover {
+            color: #00f5ff;
+            text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
+        }
+        nav .nav-cta {
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            color: white;
+            padding: 10px 24px;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 0 15px rgba(0, 245, 255, 0.3);
+        }
+        nav .nav-cta:hover {
+            box-shadow: 0 0 25px rgba(0, 245, 255, 0.5);
+            transform: translateY(-1px);
+        }
         .hero {
             background: linear-gradient(135deg, #050505 0%, #0a0a0a 100%);
             color: white;
@@ -161,11 +208,22 @@ export function getLandingHTML(origin: string): string {
     </style>
 </head>
 <body>
+    <nav>
+        <div class="logo">Insertabot</div>
+        <div class="nav-links">
+            <a href="/playground">Playground</a>
+            <a href="/dashboard">Dashboard</a>
+            <a href="/signup" class="nav-cta">Get Started Free</a>
+        </div>
+    </nav>
     <div class="hero">
         <img src="/logo.png" alt="Insertabot Logo" style="max-width: 200px; margin-bottom: 20px;">
         <h1>Insertabot</h1>
         <p>AI-Powered Chatbot Widget for Your Website</p>
-        <a href="/playground" class="cta-button">Try Live Demo →</a>
+        <div style="display: flex; gap: 20px; justify-content: center; align-items: center;">
+            <a href="/signup" class="cta-button">Get Started Free</a>
+            <a href="/playground" class="cta-button" style="background: transparent; border: 2px solid #00f5ff; box-shadow: none;">Try Live Demo →</a>
+        </div>
     </div>
 
     <div class="features">
