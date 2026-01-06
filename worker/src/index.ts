@@ -562,9 +562,9 @@ export default {
 
     // Public routes that don't require authentication
     const publicRoutes = [
-      '/', '/signup', '/playground', '/health',
+      '/', '/signup', '/playground', '/health', '/dashboard',
       '/favicon.ico', '/logo.png', '/widget.js',
-      '/v1/stripe/webhook', '/checkout-success'
+      '/v1/stripe/webhook', '/checkout-success', '/api/customer/create'
     ];
     
     // Handle public routes with global CORS
@@ -635,6 +635,106 @@ export default {
               ...SECURITY_HEADERS,
             },
           });
+        }
+
+        // Signup page
+        if (url.pathname === "/signup" && request.method === "GET") {
+          const html = getSignupHTML();
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "public, max-age=3600",
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            },
+          });
+        }
+
+        // Dashboard page
+        if (url.pathname === "/dashboard" && request.method === "GET") {
+          const apiKeyParam = url.searchParams.get('key');
+          if (!apiKeyParam) {
+            return new Response(
+              JSON.stringify({ error: "API key required. Access dashboard via your signup confirmation or use ?key=YOUR_API_KEY" }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          const customer = await getCustomerConfig(env.DB, apiKeyParam);
+          if (!customer) {
+            return new Response(
+              JSON.stringify({ error: "Invalid API key" }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          const widgetConfigData = await getWidgetConfig(env.DB, customer.customer_id);
+          if (!widgetConfigData) {
+            return new Response(
+              JSON.stringify({ error: "Configuration not found" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          const html = getDashboardHTML(customer, widgetConfigData, url.origin);
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "private, no-cache",
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            },
+          });
+        }
+
+        // Customer creation endpoint (signup)
+        if (url.pathname === "/api/customer/create" && request.method === "POST") {
+          const body = await request.json() as { email: string; company_name: string };
+
+          const existingCustomer = await getCustomerByEmail(env.DB, body.email);
+          if (existingCustomer) {
+            return new Response(
+              JSON.stringify({ error: "Email already registered" }),
+              {
+                status: 409,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          const customer = await createCustomer(env.DB, body.email, body.company_name);
+          if (!customer) {
+            return new Response(
+              JSON.stringify({ error: "Failed to create account" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              api_key: customer.api_key,
+              message: "Account created successfully"
+            }),
+            {
+              status: 201,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
         }
 
         // Favicon
@@ -778,6 +878,30 @@ export default {
             placeholder_text: widgetConfig.placeholder_text,
             show_branding: widgetConfig.show_branding,
           }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+          }
+        );
+      }
+
+      // Update widget config endpoint (for dashboard)
+      if (url.pathname === "/api/customer/config" && request.method === "PUT") {
+        const body = await request.json() as any;
+
+        const result = await updateWidgetConfig(env.DB, customerConfig.customer_id, body);
+        if (!result) {
+          return new Response(
+            JSON.stringify({ error: "Failed to update configuration" }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        return new Response(
+          JSON.stringify({ success: true, message: "Configuration updated" }),
           {
             status: 200,
             headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
