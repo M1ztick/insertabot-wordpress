@@ -11,7 +11,25 @@
     "test": "node dev-server.js --port 8080",
     "prepare": "husky install || true",
     "lint:secrets": "secretlint --config .secretlintrc.json \"**/*\" --max-warnings 0",
-    "scan:secrets": "npm run lint:secrets"
+    "scan:secrets": "npm run lint:secrets",
+
+    "dev:wrangler": "wrangler dev",
+    "dev:remote": "wrangler dev --remote",
+    "build": "tsc",
+    "deploy:wrangler": "wrangler deploy",
+    "deploy:wrangler:dev": "wrangler deploy --env development",
+    "tail": "wrangler tail",
+    "tail:dev": "wrangler tail --env development",
+    "db:list": "wrangler d1 list",
+    "db:query:prod": "wrangler d1 execute insertabot-production",
+    "db:query:dev": "wrangler d1 execute insertabot-development",
+    "db:migrate:prod": "wrangler d1 migrations apply insertabot-production",
+    "db:migrate:dev": "wrangler d1 migrations apply insertabot-development",
+    "db:backup": "wrangler d1 export insertabot-production --output=backup-$(date +%Y%m%d).sql",
+    "secret:list": "wrangler secret list",
+    "logs": "wrangler tail --format pretty",
+    "health": "curl http://localhost:8787/health",
+    "test:local": "npm run dev & sleep 5 && curl http://localhost:8787/health && kill %1"
   },
   "keywords": [
     "chatbot",
@@ -21,7 +39,7 @@
     "customer-support"
   ],
   "author": "Mistyk Media",
-  "license": "MIT",
+  "license": "GNU-v2",
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260103.0",
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
