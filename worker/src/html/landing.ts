@@ -8,20 +8,156 @@ export function getLandingHTML(origin: string): string {
     <meta name="description" content="Deploy white-label AI chatbots powered by Cloudflare Workers AI. No code required. Multi-tenant SaaS platform.">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; line-height: 1.6; color: #333; }
-        .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 100px 20px; text-align: center; }
-        .hero h1 { font-size: 3rem; margin-bottom: 20px; }
-        .hero p { font-size: 1.5rem; margin-bottom: 30px; opacity: 0.9; }
-        .cta-button { display: inline-block; background: white; color: #667eea; padding: 15px 40px; border-radius: 50px; text-decoration: none; font-weight: bold; font-size: 1.1rem; transition: transform 0.2s; }
-        .cta-button:hover { transform: scale(1.05); }
-        .features { max-width: 1200px; margin: 80px auto; padding: 0 20px; display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 40px; }
-        .feature { text-align: center; padding: 30px; }
-        .feature h3 { color: #667eea; margin-bottom: 15px; font-size: 1.5rem; }
-        .feature p { color: #666; }
-        .demo { background: #f8f9fa; padding: 80px 20px; text-align: center; }
-        .demo h2 { font-size: 2.5rem; margin-bottom: 20px; color: #333; }
-        .demo p { font-size: 1.2rem; color: #666; margin-bottom: 40px; }
-        footer { background: #2d3748; color: white; padding: 40px 20px; text-align: center; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            background: #000000;
+            color: #e2e8f0;
+        }
+        .hero {
+            background: linear-gradient(135deg, #050505 0%, #0a0a0a 100%);
+            color: white;
+            padding: 120px 20px;
+            text-align: center;
+            position: relative;
+            border-bottom: 2px solid transparent;
+            border-image: linear-gradient(90deg, #00f5ff, #ff00ff, #00f5ff) 1;
+        }
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(0, 245, 255, 0.05), transparent 70%);
+            pointer-events: none;
+        }
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff, #00f5ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            position: relative;
+            z-index: 1;
+        }
+        .hero p {
+            font-size: 1.5rem;
+            margin-bottom: 40px;
+            color: #94a3b8;
+            position: relative;
+            z-index: 1;
+        }
+        .cta-button {
+            display: inline-block;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            color: white;
+            padding: 16px 48px;
+            border-radius: 12px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.1rem;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+            position: relative;
+            z-index: 1;
+        }
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 30px rgba(0, 245, 255, 0.5), 0 0 40px rgba(255, 0, 255, 0.3);
+        }
+        .features {
+            max-width: 1200px;
+            margin: 80px auto;
+            padding: 0 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+        }
+        .feature {
+            text-align: center;
+            padding: 40px 30px;
+            background: rgba(10, 10, 10, 0.6);
+            border: 1px solid rgba(0, 245, 255, 0.2);
+            border-radius: 16px;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .feature::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00f5ff, transparent);
+            transition: left 0.5s;
+        }
+        .feature:hover::before {
+            left: 100%;
+        }
+        .feature:hover {
+            border-color: rgba(0, 245, 255, 0.5);
+            box-shadow: 0 0 30px rgba(0, 245, 255, 0.1);
+            transform: translateY(-5px);
+        }
+        .feature h3 {
+            color: #00f5ff;
+            margin-bottom: 15px;
+            font-size: 1.5rem;
+            text-shadow: 0 0 10px rgba(0, 245, 255, 0.3);
+        }
+        .feature p {
+            color: #94a3b8;
+            line-height: 1.8;
+        }
+        .demo {
+            background: linear-gradient(135deg, #050505 0%, #0a0a0a 100%);
+            padding: 100px 20px;
+            text-align: center;
+            border-top: 2px solid transparent;
+            border-bottom: 2px solid transparent;
+            border-image: linear-gradient(90deg, #ff00ff, #00f5ff, #ff00ff) 1;
+            position: relative;
+        }
+        .demo::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 0, 255, 0.05), transparent 70%);
+            pointer-events: none;
+        }
+        .demo h2 {
+            font-size: 2.8rem;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #ff00ff, #00f5ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            position: relative;
+            z-index: 1;
+        }
+        .demo p {
+            font-size: 1.2rem;
+            color: #94a3b8;
+            margin-bottom: 15px;
+            position: relative;
+            z-index: 1;
+        }
+        footer {
+            background: #000000;
+            color: #64748b;
+            padding: 50px 20px;
+            text-align: center;
+            border-top: 1px solid rgba(0, 245, 255, 0.2);
+        }
     </style>
 </head>
 <body>
