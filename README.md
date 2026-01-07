@@ -117,8 +117,8 @@ See the `docs/` folder for detailed documentation:
 
 ## License
 
-MIT
+GNU-v2
 
 ## Support
 
-For issues or questions, please contact Mistyk Media.
+For issues or questions, please contact Mistyk Media at support@insertabot.io or admin@mistykmedia.io. Thank you!
