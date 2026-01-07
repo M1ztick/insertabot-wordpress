@@ -67,6 +67,28 @@
   }
 
   /**
+   * Escape HTML to prevent XSS
+   */
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
+   * Escape HTML attribute values
+   */
+  function escapeHtmlAttr(text) {
+    if (!text) return '';
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
    * Create chat bubble (minimized state)
    */
   function createChatBubble() {
@@ -535,28 +557,6 @@
         throw error;
       }
     }
-  }
-
-  /**
-   * Escape HTML to prevent XSS
-   */
-  function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  /**
-   * Escape HTML attribute values
-   */
-  function escapeHtmlAttr(text) {
-    if (!text) return '';
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
   }
 
   /**

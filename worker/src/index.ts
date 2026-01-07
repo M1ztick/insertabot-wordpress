@@ -420,6 +420,10 @@ async function handleChatRequest(
       ...chatRequest.messages,
     ];
 
+    // Handle streaming vs non-streaming requests
+    const shouldStream = chatRequest.stream === true;
+
+    // Always get complete response from Workers AI (it doesn't support true streaming)
     let aiResponse: any;
     try {
       const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
@@ -428,6 +432,7 @@ async function handleChatRequest(
           content: m.content,
         })),
         max_tokens: Math.min(maxTokens, 2000),
+        stream: false, // Workers AI doesn't support streaming, always get complete response
       });
 
       aiResponse = response;
@@ -447,16 +452,47 @@ async function handleChatRequest(
       );
     }
 
+    // Extract response text
     const responseText = aiResponse?.result?.response || aiResponse?.response || "";
 
+    // Validate response coherence
     if (!isCoherentResponse(responseText)) {
       logger.warn("Incoherent response detected", {
         response: responseText.substring(0, 100),
       });
+
+      const fallbackText = getFallbackResponse(widgetConfig);
+
+      if (shouldStream) {
+        // Return fallback as SSE stream
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            const sseChunk = `data: ${JSON.stringify({
+              choices: [{ delta: { content: fallbackText } }]
+            })}\n\n`;
+            controller.enqueue(encoder.encode(sseChunk));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          }
+        });
+
+        return new Response(stream, {
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            ...corsHeaders,
+            ...SECURITY_HEADERS,
+          },
+        });
+      }
+
       return new Response(
         JSON.stringify({
           id: `msg-${Date.now()}`,
-          content: getFallbackResponse(widgetConfig),
+          content: fallbackText,
           model: widgetConfig.model,
           usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         }),
@@ -467,6 +503,46 @@ async function handleChatRequest(
       );
     }
 
+    // If streaming is requested, simulate it by chunking the response
+    if (shouldStream) {
+      const encoder = new TextEncoder();
+      const words = responseText.split(/(\s+)/); // Split but keep whitespace
+
+      const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            // Send chunks word by word
+            for (const word of words) {
+              if (word.trim().length > 0 || word.match(/\s/)) {
+                const sseChunk = `data: ${JSON.stringify({
+                  choices: [{ delta: { content: word } }]
+                })}\n\n`;
+                controller.enqueue(encoder.encode(sseChunk));
+              }
+            }
+
+            // Send completion signal
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+          } catch (error) {
+            controller.error(error);
+          }
+        },
+      });
+
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          ...corsHeaders,
+          ...SECURITY_HEADERS,
+        },
+      });
+    }
+
+    // Handle non-streaming response (return complete JSON)
     const responseTime = Date.now() - startTime;
 
     await logger.info("Chat request processed", {
