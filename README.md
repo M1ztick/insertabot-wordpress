@@ -98,10 +98,12 @@ insertabot_by_mistyk_media/
 
 See the `docs/` folder for detailed documentation:
 
-- [Deployment Guide](docs/DEPLOYMENT-READY.md)
+- [Quick Start](docs/QUICKSTART.md)
+- [Deployment Guide](docs/DEPLOYMENT_GUIDE.md)
+- [Setup Guide](docs/SETUP_GUIDE.md)
 - [Customer Integration](docs/CUSTOMER-INTEGRATION.md)
 - [Stripe Setup](docs/STRIPE-SETUP.md)
-- [Quick Start](docs/QUICKSTART.md)
+- [Agents Documentation](docs/AGENTS.md)
 
 ## Tech Stack
 
