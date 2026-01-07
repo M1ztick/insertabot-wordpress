@@ -292,7 +292,7 @@
         display: flex;
         flex-direction: column;
         gap: 12px;
-        background: #f9fafb;
+        background: #1f2937;
       ">
         <div class="insertabot-message insertabot-message-assistant">
           <div class="insertabot-message-content">${sanitizedConfig.greeting_message}</div>
@@ -301,8 +301,8 @@
 
       <div id="insertabot-input-container" style="
         padding: 16px;
-        background: white;
-        border-top: 1px solid #e5e7eb;
+        background: #111827;
+        border-top: 1px solid #374151;
       ">
         <form id="insertabot-form" style="display: flex; gap: 8px;">
           <input
@@ -312,10 +312,12 @@
             style="
               flex: 1;
               padding: 12px;
-              border: 1px solid #e5e7eb;
+              border: 1px solid #374151;
               border-radius: 8px;
               font-size: 14px;
               outline: none;
+              background: #1f2937;
+              color: #f9fafb;
             "
           />
           <button
@@ -338,7 +340,7 @@
         </form>
         ${widgetConfig.show_branding
           ? `<div style="text-align: center; margin-top: 8px; font-size: 11px; color: #9ca3af;">
-               Powered by <a href="https://insertabot.io" target="_blank" style="color: ${sanitizedConfig.primary_color}; text-decoration: none;">Insertabot</a>
+               Powered by <a href="https://insertabot.io" target="_blank" style="color: #60a5fa; text-decoration: none;">Insertabot</a>
              </div>`
           : ''
         }
@@ -368,16 +370,20 @@
         flex-direction: row-reverse;
       }
       .insertabot-message-content {
-        background: white;
+        background: #374151;
+        color: #f9fafb;
         padding: 10px 14px;
         border-radius: 12px;
         font-size: 14px;
         line-height: 1.5;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
       }
       .insertabot-message-user .insertabot-message-content {
         background: ${sanitizedConfig.primary_color};
         color: white;
+      }
+      #insertabot-input::placeholder {
+        color: #6b7280;
       }
       #insertabot-input:focus {
         border-color: ${sanitizedConfig.primary_color};
@@ -399,7 +405,7 @@
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background: #9ca3af;
+        background: #d1d5db;
         animation: insertabot-typing-bounce 1.4s infinite ease-in-out both;
       }
       .insertabot-typing-indicator span:nth-child(1) {
