@@ -387,6 +387,35 @@
         opacity: 0.5;
         cursor: not-allowed;
       }
+      .insertabot-typing-indicator {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        padding: 14px !important;
+      }
+      .insertabot-typing-indicator span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #9ca3af;
+        animation: insertabot-typing-bounce 1.4s infinite ease-in-out both;
+      }
+      .insertabot-typing-indicator span:nth-child(1) {
+        animation-delay: -0.32s;
+      }
+      .insertabot-typing-indicator span:nth-child(2) {
+        animation-delay: -0.16s;
+      }
+      @keyframes insertabot-typing-bounce {
+        0%, 80%, 100% {
+          transform: scale(0.8);
+          opacity: 0.5;
+        }
+        40% {
+          transform: scale(1);
+          opacity: 1;
+        }
+      }
     `;
     document.head.appendChild(style);
 
@@ -449,6 +478,37 @@
   }
 
   /**
+   * Add typing indicator
+   */
+  function addTypingIndicator() {
+    const typingDiv = document.createElement('div');
+    typingDiv.className = 'insertabot-message insertabot-message-assistant';
+    typingDiv.id = 'insertabot-typing';
+    typingDiv.innerHTML = `
+      <div class="insertabot-message-content insertabot-typing-indicator">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+    `;
+
+    chatMessages.appendChild(typingDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    return typingDiv;
+  }
+
+  /**
+   * Remove typing indicator
+   */
+  function removeTypingIndicator() {
+    const typingDiv = document.getElementById('insertabot-typing');
+    if (typingDiv) {
+      typingDiv.remove();
+    }
+  }
+
+  /**
    * Handle form submission
    */
   async function handleSubmit(event) {
@@ -483,6 +543,9 @@
    * Send message to API
    */
   async function sendMessage(userMessage) {
+    // Show typing indicator immediately
+    addTypingIndicator();
+
     abortController = new AbortController();
 
     const requestBody = {
@@ -492,28 +555,29 @@
       max_tokens: widgetConfig.max_tokens,
     };
 
-    const response = await fetch(`${API_BASE}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': API_KEY,
-      },
-      body: JSON.stringify(requestBody),
-      signal: abortController.signal,
-    });
-
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error || 'Request failed');
-    }
-
-    // Handle streaming response
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let assistantMessage = '';
-    let messageDiv = null;
-
     try {
+      const response = await fetch(`${API_BASE}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': API_KEY,
+        },
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal,
+      });
+
+      if (!response.ok) {
+        removeTypingIndicator();
+        const error = await response.json();
+        throw new Error(error.error || 'Request failed');
+      }
+
+      // Handle streaming response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantMessage = '';
+      let messageDiv = null;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -534,6 +598,8 @@
                 assistantMessage += content;
 
                 if (!messageDiv) {
+                  // Remove typing indicator when first chunk arrives
+                  removeTypingIndicator();
                   messageDiv = addMessage('assistant', assistantMessage);
                 } else {
                   updateMessage(messageDiv, assistantMessage);
@@ -551,6 +617,7 @@
         messages.push({ role: 'assistant', content: assistantMessage });
       }
     } catch (error) {
+      removeTypingIndicator();
       if (error.name === 'AbortError') {
         log.info('Request aborted');
       } else {
