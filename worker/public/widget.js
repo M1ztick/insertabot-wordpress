@@ -12,7 +12,9 @@
   // Configuration
   const SCRIPT_TAG = document.currentScript;
   const API_KEY = SCRIPT_TAG?.getAttribute('data-api-key');
-  const API_BASE = SCRIPT_TAG?.getAttribute('data-api-base') || 'https://api.insertabot.io';
+  // Default API_BASE to the same origin as the script, or allow override via data-api-base
+  const SCRIPT_ORIGIN = SCRIPT_TAG ? new URL(SCRIPT_TAG.src).origin : window.location.origin;
+  const API_BASE = SCRIPT_TAG?.getAttribute('data-api-base') || SCRIPT_ORIGIN;
   const DEBUG = SCRIPT_TAG?.getAttribute('data-debug') === 'true';
 
   // Validation
