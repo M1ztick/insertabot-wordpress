@@ -35,19 +35,6 @@ import {
   shouldPerformSearch,
 } from "./search";
 import { extractTextFromMessage } from "./utils";
-import {
-  ErrorHandler,
-  AppError,
-  ErrorCode,
-  ValidationError,
-  AuthenticationError,
-  RateLimitError,
-  DatabaseError,
-  ExternalServiceError,
-  withTimeout,
-  withDatabase,
-  withRetry
-} from "./errors";
 
 export interface Env {
   DB: D1Database;
@@ -118,6 +105,7 @@ const SECURITY_HEADERS: HeadersInit = {
 
 // Validate origin against customer's allowed domains
 function isOriginAllowed(origin: string, allowedDomains: string | null): boolean {
+  // Validate inputs
   if (!origin || typeof origin !== 'string') return false;
   if (!allowedDomains || typeof allowedDomains !== 'string') return false;
 
@@ -126,14 +114,18 @@ function isOriginAllowed(origin: string, allowedDomains: string | null): boolean
     return domains.some(domain => {
       if (domain === '*') return true;
       if (domain === origin) return true;
+      // Support wildcard subdomains: *.example.com
       if (domain.startsWith('*.')) {
         const baseDomain = domain.slice(2);
+        // Validate baseDomain is not empty
         if (!baseDomain || baseDomain.length === 0) return false;
+        // Must be exact match OR end with .baseDomain to prevent maliciousexample.com matching example.com
         return origin === baseDomain || origin.endsWith('.' + baseDomain);
       }
       return false;
     });
   } catch (error) {
+    // Log error and return false to deny access on any parsing errors
     console.error('Error validating origin:', error);
     return false;
   }
@@ -150,40 +142,42 @@ function createCorsHeaders(origin: string, allowed: boolean): HeadersInit {
   };
 }
 
+/**
+ * Validate CORS configuration at runtime.
+ * In production we never allow a wildcard origin – it defeats the purpose of CORS.
+ */
 function validateCorsConfig(env: Env): void {
   if (env.ENVIRONMENT === "production") {
     const origins = env.CORS_ORIGINS.split(",").map((s) => s.trim());
     if (origins.includes("*")) {
-      throw new AppError(
-        ErrorCode.INVALID_REQUEST,
-        "CORS_ORIGINS must not contain wildcard '*' in production",
-        400
+      throw new Error(
+        "CORS_ORIGINS must not contain wildcard '*' in production. Please configure specific allowed origins.",
       );
     }
   }
 }
 
+/**
+ * Rate limit public endpoints by IP address
+ */
 async function checkPublicRateLimit(
   kv: KVNamespace,
   clientIP: string,
   pathname: string
-): Promise<void> {
+): Promise<{ allowed: boolean; retryAfter?: number }> {
   const key = `public:${pathname}:${clientIP}`;
+  const count = parseInt(await kv.get(key) || '0');
   
-  try {
-    const count = parseInt(await kv.get(key) || '0');
-    
-    if (count >= 100) {
-      throw new RateLimitError(3600, 'hourly');
-    }
-    
-    await kv.put(key, String(count + 1), { expirationTtl: 3600 });
-  } catch (error) {
-    if (error instanceof RateLimitError) throw error;
-    throw new AppError(ErrorCode.SERVICE_UNAVAILABLE, 'Rate limiting service unavailable');
+  // 100 requests per hour for public endpoints
+  if (count >= 100) {
+    return { allowed: false, retryAfter: 3600 };
   }
+  
+  await kv.put(key, String(count + 1), { expirationTtl: 3600 });
+  return { allowed: true };
 }
 
+// Extract API key from headers
 function getApiKey(request: Request): string | null {
   const headerKey = request.headers.get("X-API-Key");
   if (headerKey) return headerKey;
@@ -194,128 +188,110 @@ function getApiKey(request: Request): string | null {
   return null;
 }
 
+// Fetch single record helper
 async function fetchSingle<T>(
   db: D1Database,
   query: string,
-  params: any[],
-  operationName: string = 'fetch'
+  params: any[]
 ): Promise<T | null> {
-  return withDatabase(async () => {
+  try {
     const result = await db
       .prepare(query)
       .bind(...params)
       .first<T>();
     return result || null;
-  }, operationName);
+  } catch (error) {
+    console.error("Database fetch error:", error);
+    return null;
+  }
 }
 
 async function getCustomerConfig(
   db: D1Database,
   apiKey: string
-): Promise<CustomerConfig> {
-  if (!validateApiKey(apiKey)) {
-    throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Invalid API key format');
-  }
-  
-  const config = await fetchSingle<CustomerConfig>(
+): Promise<CustomerConfig | null> {
+  return fetchSingle<CustomerConfig>(
     db,
     `SELECT customer_id, api_key, plan_type, status, rate_limit_per_hour, rate_limit_per_day, rag_enabled
 		 FROM customers WHERE api_key = ? AND status = 'active'`,
-    [apiKey],
-    'getCustomerConfig'
+    [apiKey]
   );
-  
-  if (!config) {
-    throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Invalid or inactive API key');
-  }
-  
-  return config;
 }
 
 async function getWidgetConfig(
   db: D1Database,
   customerId: string
-): Promise<WidgetConfig> {
-  const config = await fetchSingle<WidgetConfig>(
+): Promise<WidgetConfig | null> {
+  return fetchSingle<WidgetConfig>(
     db,
     `SELECT primary_color, position, greeting_message, bot_name, bot_avatar_url,
 		        model, temperature, max_tokens, system_prompt, allowed_domains,
 		        COALESCE(placeholder_text, 'Type your message...') as placeholder_text,
 		        COALESCE(show_branding, 1) as show_branding
 		 FROM widget_configs WHERE customer_id = ?`,
-    [customerId],
-    'getWidgetConfig'
+    [customerId]
   );
-  
-  if (!config) {
-    throw new AppError(ErrorCode.CONFIG_NOT_FOUND, 'Widget configuration not found');
-  }
-  
-  return config;
 }
 
+// Rate limiting for customer endpoints
 async function checkRateLimit(
   kv: KVNamespace,
   customerId: string,
   limitPerHour: number,
   limitPerDay: number
-): Promise<void> {
+): Promise<{ allowed: boolean; retryAfter?: number }> {
   const now = Date.now();
   const hourKey = `ratelimit:${customerId}:hour:${Math.floor(now / 3600000)}`;
   const dayKey = `ratelimit:${customerId}:day:${Math.floor(now / 86400000)}`;
 
   const increment = async (key: string, ttl: number): Promise<number> => {
-    try {
-      const current = parseInt((await kv.get(key)) || "0");
-      const updated = current + 1;
-      await kv.put(key, updated.toString(), { expirationTtl: ttl });
-      return updated;
-    } catch (error) {
-      throw new AppError(ErrorCode.SERVICE_UNAVAILABLE, 'Rate limiting service unavailable');
-    }
+    const current = parseInt((await kv.get(key)) || "0");
+    const updated = current + 1;
+    await kv.put(key, updated.toString(), { expirationTtl: ttl });
+    return updated;
   };
 
   const currentHourCount = await increment(hourKey, 3600);
   const currentDayCount = await increment(dayKey, 86400);
 
-  if (currentHourCount > limitPerHour) {
-    throw new RateLimitError(3600, 'hourly');
+  const allowed =
+    currentHourCount <= limitPerHour && currentDayCount <= limitPerDay;
+
+  if (!allowed) {
+    const retryAfter = currentHourCount > limitPerHour ? 3600 : 86400;
+    return { allowed: false, retryAfter };
   }
-  
-  if (currentDayCount > limitPerDay) {
-    throw new RateLimitError(86400, 'daily');
-  }
+
+  return { allowed: true };
 }
 
-function validateChatMessage(message: any): void {
+// Input validation
+function validateChatMessage(message: any): string | null {
   if (Array.isArray(message)) {
     const textPart = message.find((part: any) => part.type === "text");
-    if (!textPart || !textPart.text) {
-      throw new ValidationError('Multimodal message must contain text content');
-    }
+    if (!textPart || !textPart.text) return null;
     const trimmed = textPart.text.trim();
     if (trimmed.length > 10000) {
-      throw new ValidationError('Message exceeds maximum length of 10000 characters');
+      return "Message exceeds maximum length of 10000 characters";
     }
-    return;
+    return null;
   }
 
   if (!message || typeof message !== "string") {
-    throw new ValidationError('Message must be a non-empty string');
+    return "Message must be a non-empty string";
   }
 
   const trimmed = message.trim();
-  if (trimmed.length === 0) {
-    throw new ValidationError('Message cannot be empty');
-  }
-  if (trimmed.length > 10000) {
-    throw new ValidationError('Message exceeds maximum length of 10000 characters');
-  }
+  if (trimmed.length === 0) return "Message cannot be empty";
+  if (trimmed.length > 10000) return "Message exceeds maximum length of 10000 characters";
   if (trimmed.toLowerCase().includes("sql") && trimmed.includes(";")) {
-    throw new ValidationError('Invalid message content detected');
+    return "Invalid message content";
   }
+
+  return null;
 }
 
+// Response validation
 function isCoherentResponse(content: string): boolean {
   if (!content || content.length === 0) return false;
   if (content.length < 10) return false;
@@ -338,6 +314,7 @@ function isCoherentResponse(content: string): boolean {
   return true;
 }
 
+// Fallback response
 function getFallbackResponse(widgetConfig: WidgetConfig): string {
   const fallbacks = [
     `Hi! I'm ${widgetConfig.bot_name}. I'm having a moment of confusion. Could you try asking your question again?`,
@@ -348,6 +325,7 @@ function getFallbackResponse(widgetConfig: WidgetConfig): string {
   return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }
 
+// Main chat handler
 async function handleChatRequest(
   request: Request,
   env: Env,
@@ -356,34 +334,48 @@ async function handleChatRequest(
   widgetConfig: WidgetConfig,
   corsHeaders: HeadersInit
 ): Promise<Response> {
-  const logger = new StructuredLogger("chat-handler", env.ENVIRONMENT, env.ANALYTICS);
+  const logger = new StructuredLogger(
+    "chat-handler",
+    env.ENVIRONMENT,
+    env.ANALYTICS
+  );
 
   try {
     const startTime = Date.now();
     const chatRequest = (await request.json()) as ChatRequest;
 
     if (!chatRequest.messages || !Array.isArray(chatRequest.messages)) {
-      throw new ValidationError('Invalid request: messages array required');
+      return new Response(
+        JSON.stringify({ error: "Invalid request: messages array required" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+        }
+      );
     }
 
     const userMessage = chatRequest.messages[chatRequest.messages.length - 1];
-    validateChatMessage(userMessage?.content);
+    const validationError = validateChatMessage(userMessage?.content);
+    if (validationError) {
+      return new Response(JSON.stringify({ error: validationError }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+      });
+    }
 
+    // Extract text content from the message (handles both string and multimodal content)
     const textContent = extractTextFromMessage(userMessage.content);
 
     let ragContext = "";
     if (customerConfig.rag_enabled && env.VECTORIZE) {
-      try {
-        const contextResults = await withTimeout(
-          () => getRelevantContext(env, env.DB, customerId, textContent),
-          5000,
-          'RAG context retrieval'
-        );
-        if (contextResults.length > 0) {
-          ragContext = `\n\nRelevant context:\n${contextResults.join("\n\n")}`;
-        }
-      } catch (error) {
-        logger.warn("RAG context retrieval failed", { error: String(error) });
+      const contextResults = await getRelevantContext(
+        env,
+        env.DB,
+        customerId,
+        textContent
+      );
+      if (contextResults.length > 0) {
+        ragContext = `\n\nRelevant context:\n${contextResults.join("\n\n")}`;
       }
     }
 
@@ -397,15 +389,10 @@ async function handleChatRequest(
       });
 
       try {
-        const searchResults = await withRetry(
-          () => withTimeout(
-            () => performWebSearch(textContent, env.TAVILY_API_KEY!, 5),
-            10000,
-            'web search'
-          ),
-          2,
-          1000,
-          'web search with retry'
+        const searchResults = await performWebSearch(
+          textContent,
+          env.TAVILY_API_KEY,
+          5
         );
 
         if (searchResults.length > 0) {
@@ -433,35 +420,42 @@ async function handleChatRequest(
       ...chatRequest.messages,
     ];
 
+    // Handle streaming vs non-streaming requests
     const shouldStream = chatRequest.stream === true;
 
-    // AI model call with timeout and retry
-    const aiResponse = await withRetry(
-      () => withTimeout(
-        () => env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-          messages: messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          max_tokens: Math.min(maxTokens, 2000),
-          stream: false,
-        }),
-        30000,
-        'AI model inference'
-      ),
-      2,
-      1000,
-      'AI model call'
-    ).catch((error) => {
-      logger.error("AI model error", { error: String(error) });
-      return {
-        result: { response: getFallbackResponse(widgetConfig) },
-        fallback: true
-      };
-    });
+    // Always get complete response from Workers AI (it doesn't support true streaming)
+    let aiResponse: any;
+    try {
+      const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+        messages: messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })),
+        max_tokens: Math.min(maxTokens, 2000),
+        stream: false, // Workers AI doesn't support streaming, always get complete response
+      });
 
+      aiResponse = response;
+    } catch (aiError) {
+      logger.error("AI model error", { error: String(aiError) });
+      return new Response(
+        JSON.stringify({
+          id: `msg-${Date.now()}`,
+          content: getFallbackResponse(widgetConfig),
+          model: widgetConfig.model,
+          usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+        }
+      );
+    }
+
+    // Extract response text
     const responseText = aiResponse?.result?.response || aiResponse?.response || "";
 
+    // Validate response coherence
     if (!isCoherentResponse(responseText)) {
       logger.warn("Incoherent response detected", {
         response: responseText.substring(0, 100),
@@ -470,6 +464,7 @@ async function handleChatRequest(
       const fallbackText = getFallbackResponse(widgetConfig);
 
       if (shouldStream) {
+        // Return fallback as SSE stream
         const encoder = new TextEncoder();
         const stream = new ReadableStream({
           start(controller) {
@@ -508,13 +503,15 @@ async function handleChatRequest(
       );
     }
 
+    // If streaming is requested, simulate it by chunking the response
     if (shouldStream) {
       const encoder = new TextEncoder();
-      const words = responseText.split(/(\s+)/);
+      const words = responseText.split(/(\s+)/); // Split but keep whitespace
 
       const stream = new ReadableStream({
         async start(controller) {
           try {
+            // Send chunks word by word
             for (const word of words) {
               if (word.trim().length > 0 || word.match(/\s/)) {
                 const sseChunk = `data: ${JSON.stringify({
@@ -523,6 +520,8 @@ async function handleChatRequest(
                 controller.enqueue(encoder.encode(sseChunk));
               }
             }
+
+            // Send completion signal
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             controller.close();
           } catch (error) {
@@ -543,6 +542,7 @@ async function handleChatRequest(
       });
     }
 
+    // Handle non-streaming response (return complete JSON)
     const responseTime = Date.now() - startTime;
 
     await logger.info("Chat request processed", {
@@ -576,32 +576,17 @@ async function handleChatRequest(
     );
   } catch (error) {
     logger.error("Chat request error", { error: String(error) });
-    
-    const fallbackText = getFallbackResponse(widgetConfig);
-    
-    return new Response(
-      JSON.stringify({
-        id: `msg-${Date.now()}`,
-        content: fallbackText,
-        model: widgetConfig.model,
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        error: 'service_temporarily_unavailable'
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
-      }
-    );
+    return new Response(JSON.stringify({ error: "Internal server error" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+    });
   }
 }
 
+// Health check endpoint
 async function handleHealthCheck(env: Env): Promise<Response> {
   try {
-    const result = await withTimeout(
-      () => env.DB.prepare("SELECT 1").first(),
-      5000,
-      'health check database query'
-    );
+    const result = await env.DB.prepare("SELECT 1").first();
     const dbHealthy = !!result;
 
     return new Response(
@@ -632,51 +617,51 @@ async function handleHealthCheck(env: Env): Promise<Response> {
   }
 }
 
+// Main request handler
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const url = new URL(request.url);
     const origin = request.headers.get("origin") || "";
     const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
     
-    const logger = new StructuredLogger("request-handler", env.ENVIRONMENT, env.ANALYTICS);
-    const errorHandler = new ErrorHandler(env.ENVIRONMENT, env.ANALYTICS);
-    
+    // Validate CORS configuration
     try {
       validateCorsConfig(env);
     } catch (error) {
-      return errorHandler.handleError(
-        error instanceof AppError ? error : new AppError(ErrorCode.INVALID_REQUEST, String(error), 400),
-        { url: url.pathname, origin, clientIP }
-      );
+      return new Response(JSON.stringify({ error: String(error) }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...SECURITY_HEADERS },
+      });
     }
 
+    const logger = new StructuredLogger("request-handler", env.ENVIRONMENT, env.ANALYTICS);
+
+    // Public routes that don't require authentication
     const publicRoutes = [
       '/', '/signup', '/playground', '/health', '/dashboard',
       '/favicon.ico', '/logo.png', '/widget.js',
       '/v1/stripe/webhook', '/checkout-success', '/api/customer/create'
     ];
     
+    // Handle public routes with global CORS
     if (publicRoutes.includes(url.pathname)) {
       const globalOrigins = env.CORS_ORIGINS.split(',').map(o => o.trim());
       const allowed = globalOrigins.includes('*') || globalOrigins.includes(origin);
       const corsHeaders = createCorsHeaders(origin, allowed);
       
+      // Rate limit public endpoints
       if (url.pathname !== '/favicon.ico') {
-        try {
-          await checkPublicRateLimit(env.RATE_LIMITER, clientIP, url.pathname);
-        } catch (error) {
-          if (error instanceof RateLimitError) {
-            const response = await errorHandler.handleError(error, { url: url.pathname, clientIP });
-            const responseHeaders: Record<string, string> = {};
-            response.headers.forEach((value, key) => {
-              responseHeaders[key] = value;
-            });
-            return new Response(response.body, {
-              status: response.status,
-              headers: { ...responseHeaders, ...corsHeaders }
-            });
-          }
-          throw error;
+        const rateLimit = await checkPublicRateLimit(env.RATE_LIMITER, clientIP, url.pathname);
+        if (!rateLimit.allowed) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+            status: 429,
+            headers: {
+              "Content-Type": "application/json",
+              "Retry-After": String(rateLimit.retryAfter),
+              ...corsHeaders,
+              ...SECURITY_HEADERS
+            },
+          });
         }
       }
       
@@ -684,7 +669,9 @@ export default {
         return new Response(null, { status: 204, headers: { ...corsHeaders, ...SECURITY_HEADERS } });
       }
 
+      // Handle public route responses
       try {
+        // Playground
         if (url.pathname === "/playground" && request.method === "GET") {
           const html = getPlaygroundHTML(url.origin);
           return new Response(html, {
@@ -698,6 +685,7 @@ export default {
           });
         }
 
+        // Widget script
         if (url.pathname === "/widget.js" && request.method === "GET") {
           const widgetJs = getWidgetScript(url.origin);
           return new Response(widgetJs, {
@@ -711,6 +699,7 @@ export default {
           });
         }
 
+        // Landing page
         if (url.pathname === "/" && request.method === "GET") {
           const html = getLandingHTML(url.origin);
           return new Response(html, {
@@ -724,6 +713,7 @@ export default {
           });
         }
 
+        // Signup page
         if (url.pathname === "/signup" && request.method === "GET") {
           const html = getSignupHTML();
           return new Response(html, {
@@ -737,17 +727,40 @@ export default {
           });
         }
 
+        // Dashboard page
         if (url.pathname === "/dashboard" && request.method === "GET") {
           const apiKeyParam = url.searchParams.get('key');
           if (!apiKeyParam) {
-            throw new AuthenticationError(
-              ErrorCode.MISSING_API_KEY,
-              "API key required. Access dashboard via your signup confirmation or use ?key=YOUR_API_KEY"
+            return new Response(
+              JSON.stringify({ error: "API key required. Access dashboard via your signup confirmation or use ?key=YOUR_API_KEY" }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
             );
           }
 
           const customer = await getCustomerConfig(env.DB, apiKeyParam);
+          if (!customer) {
+            return new Response(
+              JSON.stringify({ error: "Invalid API key" }),
+              {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
           const widgetConfigData = await getWidgetConfig(env.DB, customer.customer_id);
+          if (!widgetConfigData) {
+            return new Response(
+              JSON.stringify({ error: "Configuration not found" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
 
           const html = getDashboardHTML(customer, widgetConfigData, url.origin);
           return new Response(html, {
@@ -761,17 +774,30 @@ export default {
           });
         }
 
+        // Customer creation endpoint (signup)
         if (url.pathname === "/api/customer/create" && request.method === "POST") {
           const body = await request.json() as { email: string; company_name: string };
 
           const existingCustomer = await getCustomerByEmail(env.DB, body.email);
           if (existingCustomer) {
-            throw new AppError(ErrorCode.INVALID_REQUEST, "Email already registered", 409);
+            return new Response(
+              JSON.stringify({ error: "Email already registered" }),
+              {
+                status: 409,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
           }
 
           const customer = await createCustomer(env.DB, body.email, body.company_name);
           if (!customer) {
-            throw new AppError(ErrorCode.INTERNAL_ERROR, "Failed to create account", 500);
+            return new Response(
+              JSON.stringify({ error: "Failed to create account" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
           }
 
           return new Response(
@@ -787,10 +813,12 @@ export default {
           );
         }
 
+        // Favicon
         if (url.pathname === "/favicon.ico") {
           return new Response(null, { status: 204 });
         }
 
+        // Health check
         if (url.pathname === "/health" && request.method === "GET") {
           const response = await handleHealthCheck(env);
           const responseHeaders: Record<string, string> = {};
@@ -803,21 +831,18 @@ export default {
           });
         }
       } catch (error) {
-        const response = await errorHandler.handleError(
-          error instanceof AppError ? error : new AppError(ErrorCode.INTERNAL_ERROR, 'Public route error'),
-          { url: url.pathname, origin, clientIP }
-        );
-        const responseHeaders: Record<string, string> = {};
-        response.headers.forEach((value, key) => {
-          responseHeaders[key] = value;
-        });
-        return new Response(response.body, {
-          status: response.status,
-          headers: { ...responseHeaders, ...corsHeaders }
+        console.error("Public route error:", error);
+        return new Response(JSON.stringify({ error: "Internal server error" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
         });
       }
     }
 
+    // Allow CORS preflight for protected endpoints without requiring an API key.
+    // Preflight requests do not include custom headers like X-API-Key, so
+    // we must respond based on the global CORS_ORIGINS setting rather than
+    // performing per-customer origin validation which requires an API key.
     if (request.method === "OPTIONS") {
       const globalOrigins = env.CORS_ORIGINS.split(',').map(o => o.trim());
       const allowed = globalOrigins.includes('*') || globalOrigins.includes(origin);
@@ -825,40 +850,84 @@ export default {
       return new Response(null, { status: 204, headers: { ...preflightCors, ...SECURITY_HEADERS } });
     }
 
-    try {
-      const apiKey = getApiKey(request);
-      if (!apiKey) {
-        throw new AuthenticationError(ErrorCode.MISSING_API_KEY, 'Missing API key');
-      }
+    // Protected routes - require API key
+    const apiKey = getApiKey(request);
+    if (!apiKey) {
+      const corsHeaders = createCorsHeaders(origin, false);
+      return new Response(JSON.stringify({ error: "Missing API key" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+      });
+    }
 
-      const customerConfig = await getCustomerConfig(env.DB, apiKey);
-      const widgetConfig = await getWidgetConfig(env.DB, customerConfig.customer_id);
+    // Get customer config
+    const customerConfig = await getCustomerConfig(env.DB, apiKey);
+    if (!customerConfig) {
+      const corsHeaders = createCorsHeaders(origin, false);
+      return new Response(JSON.stringify({ error: 'Invalid API key' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders, ...SECURITY_HEADERS },
+      });
+    }
 
-      const originAllowed = isOriginAllowed(origin, widgetConfig.allowed_domains);
-      const corsHeaders = createCorsHeaders(origin, originAllowed);
+    // Get widget config for CORS validation
+    const widgetConfig = await getWidgetConfig(env.DB, customerConfig.customer_id);
+    if (!widgetConfig) {
+      const corsHeaders = createCorsHeaders(origin, false);
+      return new Response(JSON.stringify({ error: 'Invalid configuration' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders, ...SECURITY_HEADERS },
+      });
+    }
+
+    // Validate origin against customer's allowed domains
+    const originAllowed = isOriginAllowed(origin, widgetConfig.allowed_domains);
+    const corsHeaders = createCorsHeaders(origin, originAllowed);
+    
+    if (!originAllowed && origin) {
+      // Log blocked origin for monitoring
+      await logger.warn("Blocked origin attempt", {
+        origin,
+        apiKey: apiKey.substring(0, 12) + '...',
+        customerId: customerConfig.customer_id,
+        path: url.pathname,
+      });
       
-      if (!originAllowed && origin) {
-        await logger.warn("Blocked origin attempt", {
-          origin,
-          apiKey: apiKey.substring(0, 12) + '...',
-          customerId: customerConfig.customer_id,
-          path: url.pathname,
-        });
-        
-        throw new AppError(ErrorCode.ORIGIN_NOT_ALLOWED, 'Origin not allowed', 403);
-      }
+      return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json', ...corsHeaders, ...SECURITY_HEADERS },
+      });
+    }
 
-      if (request.method === "OPTIONS") {
-        return new Response(null, { status: 204, headers: { ...corsHeaders, ...SECURITY_HEADERS } });
-      }
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: { ...corsHeaders, ...SECURITY_HEADERS } });
+    }
 
+    try {
+      // Chat completions endpoint
       if (url.pathname === "/v1/chat/completions" && request.method === "POST") {
-        await checkRateLimit(
+        const rateLimit = await checkRateLimit(
           env.RATE_LIMITER,
           customerConfig.customer_id,
           customerConfig.rate_limit_per_hour,
           customerConfig.rate_limit_per_day
         );
+
+        if (!rateLimit.allowed) {
+          return new Response(
+            JSON.stringify({ error: "Rate limit exceeded" }),
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": String(rateLimit.retryAfter),
+                ...corsHeaders,
+                ...SECURITY_HEADERS,
+              },
+            }
+          );
+        }
 
         return handleChatRequest(
           request,
@@ -870,6 +939,7 @@ export default {
         );
       }
 
+      // Widget config endpoint - FIXED: Now returns ALL required fields
       if (url.pathname === "/v1/widget/config" && request.method === "GET") {
         return new Response(
           JSON.stringify({
@@ -891,12 +961,19 @@ export default {
         );
       }
 
+      // Update widget config endpoint (for dashboard)
       if (url.pathname === "/api/customer/config" && request.method === "PUT") {
         const body = await request.json() as any;
 
         const result = await updateWidgetConfig(env.DB, customerConfig.customer_id, body);
         if (!result) {
-          throw new AppError(ErrorCode.INTERNAL_ERROR, "Failed to update configuration", 500);
+          return new Response(
+            JSON.stringify({ error: "Failed to update configuration" }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
         }
 
         return new Response(
@@ -908,28 +985,17 @@ export default {
         );
       }
 
-      throw new AppError(ErrorCode.INVALID_REQUEST, 'Endpoint not found', 404);
-      
-    } catch (error) {
-      const response = await errorHandler.handleError(
-        error instanceof AppError ? error : new AppError(ErrorCode.INTERNAL_ERROR, 'Request processing failed'),
-        { url: url.pathname, origin, clientIP, method: request.method }
-      );
-      
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value;
+      // 404 for unknown routes
+      return new Response(JSON.stringify({ error: "Not found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
       });
-      
-      try {
-        const corsHeaders = createCorsHeaders(origin, false);
-        return new Response(response.body, {
-          status: response.status,
-          headers: { ...responseHeaders, ...corsHeaders }
-        });
-      } catch {
-        return response;
-      }
+    } catch (error) {
+      console.error("Request handler error:", error);
+      return new Response(JSON.stringify({ error: "Internal server error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+      });
     }
   },
 };

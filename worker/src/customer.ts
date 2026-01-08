@@ -3,6 +3,7 @@
  */
 
 import { generateApiKey } from './utils';
+import { withDatabase, DatabaseError } from './errors';
 
 export interface Customer {
 	customer_id: string;
@@ -18,7 +19,7 @@ export async function createCustomer(
 	email: string,
 	companyName: string
 ): Promise<Customer | null> {
-	try {
+	return withDatabase(async () => {
 		const customerId = 'cust_' + generateApiKey().slice(6, 22);
 		const apiKey = generateApiKey();
 		const now = Math.floor(Date.now() / 1000);
@@ -42,14 +43,13 @@ export async function createCustomer(
 			plan_type: 'free',
 			status: 'active'
 		};
-	} catch (error) {
-		console.error('Error creating customer:', error);
-		return null;
-	}
+	}, 'createCustomer');
 }
 
 export async function getCustomerByEmail(db: D1Database, email: string): Promise<Customer | null> {
-	return await db.prepare('SELECT * FROM customers WHERE email = ?').bind(email).first<Customer>();
+	return withDatabase(async () => {
+		return await db.prepare('SELECT * FROM customers WHERE email = ?').bind(email).first<Customer>();
+	}, 'getCustomerByEmail');
 }
 
 export async function updateWidgetConfig(
@@ -63,7 +63,7 @@ export async function updateWidgetConfig(
 		system_prompt?: string;
 	}
 ): Promise<boolean> {
-	try {
+	return withDatabase(async () => {
 		const updates: string[] = [];
 		const values: any[] = [];
 
@@ -99,8 +99,5 @@ export async function updateWidgetConfig(
 		`).bind(...values).run();
 
 		return true;
-	} catch (error) {
-		console.error('Error updating widget config:', error);
-		return false;
-	}
+	}, 'updateWidgetConfig');
 }
