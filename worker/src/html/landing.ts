@@ -237,7 +237,7 @@ export function getLandingHTML(origin: string): string {
         </div>
         <div class="feature">
             <h3>🧠 Smart AI</h3>
-            <p>Powered by Cloudflare Workers AI with web search capabilities for current information.</p>
+            <p>Advanced language models with web search capabilities for current information.</p>
         </div>
         <div class="feature">
             <h3>🔒 Secure</h3>
@@ -259,8 +259,8 @@ export function getLandingHTML(origin: string): string {
     </div>
 
     <footer>
-        <p>&copy; 2026 Mistyk Media. All rights reserved.</p>
-        <p style="margin-top: 10px; opacity: 0.7;">Built with Cloudflare • D1 • KV • Vectorize • Llama 3.1 8B</p>
+        <p>&copy; 2026 Insertabot. All rights reserved.</p>
+        <p style="margin-top: 10px; opacity: 0.7;">Powered by Cloudflare Workers AI (Llama 3.1 8B) • D1 • KV • Vectorize</p>
     </footer>
 
     <!-- Live Demo Widget -->
