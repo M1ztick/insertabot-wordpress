@@ -5,8 +5,9 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "deploy:dev": "wrangler deploy --env development",
+    "deploy": "wrangler deploy --env=\"\"",
+    "deploy:production": "wrangler deploy --env=\"\"",
+    "deploy:dev": "echo '⚠️  Development deployments are archived. Use npm run deploy for production only.' && exit 1",
     "tail": "wrangler tail",
     "db:create": "wrangler d1 create insertabot-production",
     "db:create:dev": "wrangler d1 create insertabot-development",

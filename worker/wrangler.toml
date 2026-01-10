@@ -22,7 +22,7 @@ database_id = "3d7d004d-ed6c-486c-a51e-a59f51bcd307"
 # KV Namespace for rate limiting
 [[kv_namespaces]]
 binding = "RATE_LIMITER"
-id = "YOUR_KV_NAMESPACE_ID_HERE"
+id = "5f08c9439c594be69c44c69a8c7aa280"
 
 # Vectorize index for RAG
 [[vectorize]]
@@ -41,7 +41,7 @@ binding = "AI"
 [vars]
 ENVIRONMENT = "production"
 CORS_ORIGINS = "https://insertabot.io" # Production CORS - specific domain for security
-STRIPE_PUBLISHABLE_KEY = "pk_live_YOUR_STRIPE_PUBLISHABLE_KEY_HERE"
+STRIPE_PUBLISHABLE_KEY = "pk_live_51QOYyjG8Nyr8TvxI1U1wVGXdC1V8X801lKl1dUW3hFKZnijRHcORkr680kqYYNZSbSUdmoHAoSPMMhFx6Zu4FgwM00gPsULLt8"
 
 # Secrets (set via: wrangler secret put SECRET_NAME)
 # STRIPE_SECRET_KEY - Add via: wrangler secret put STRIPE_SECRET_KEY
@@ -54,7 +54,14 @@ routes = [
   { pattern = "insertabot.io/*", zone_name = "insertabot.io" }
 ]
 
-# Development configuration
+# ============================================================================
+# DEVELOPMENT CONFIGURATION (ARCHIVED - NOT FOR DEPLOYMENT)
+# ============================================================================
+# This configuration is kept as a reference and failsafe only.
+# DO NOT deploy to development environment - production only.
+# To prevent accidental deployment, do not use --env=development flag.
+# ============================================================================
+
 [env.development]
 name = "insertabot-api-dev"
 
@@ -75,4 +82,4 @@ database_id = "551c3e86-cbf6-4217-8617-20d60085a7f1"
 
 [[env.development.kv_namespaces]]
 binding = "RATE_LIMITER"
-id = "YOUR_VECTORIZE_INDEX_ID_HERE"
+id = "3ff9aad75a3443709196fc824f40a4d2"
