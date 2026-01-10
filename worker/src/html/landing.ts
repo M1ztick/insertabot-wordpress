@@ -212,6 +212,7 @@ export function getLandingHTML(origin: string): string {
         <div class="logo">Insertabot</div>
         <div class="nav-links">
             <a href="/playground">Playground</a>
+            <a href="/login">Login</a>
             <a href="/signup" class="nav-cta">Get Started Free</a>
         </div>
     </nav>

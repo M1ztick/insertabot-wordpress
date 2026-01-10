@@ -27,6 +27,7 @@ import {
 import { getPlaygroundHTML } from "./playground";
 import { getDashboardHTML } from "./html/dashboard";
 import { getSignupHTML } from "./html/signup";
+import { getLoginHTML } from "./html/login";
 import { getLandingHTML } from "./html/landing";
 import { getWidgetScript } from "./html/widget-script";
 import {
@@ -651,9 +652,9 @@ export default {
     }
 
     const publicRoutes = [
-      '/', '/signup', '/playground', '/health', '/dashboard',
+      '/', '/signup', '/login', '/playground', '/health', '/dashboard',
       '/favicon.ico', '/logo.png', '/widget.js',
-      '/v1/stripe/webhook', '/checkout-success', '/api/customer/create'
+      '/v1/stripe/webhook', '/checkout-success', '/api/customer/create', '/api/customer/login'
     ];
     
     if (publicRoutes.includes(url.pathname)) {
@@ -737,6 +738,19 @@ export default {
           });
         }
 
+        if (url.pathname === "/login" && request.method === "GET") {
+          const html = getLoginHTML();
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "public, max-age=3600",
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            },
+          });
+        }
+
         if (url.pathname === "/dashboard" && request.method === "GET") {
           const apiKeyParam = url.searchParams.get('key');
           if (!apiKeyParam) {
@@ -782,6 +796,36 @@ export default {
             }),
             {
               status: 201,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        if (url.pathname === "/api/customer/login" && request.method === "POST") {
+          const body = await request.json() as { email: string };
+
+          const customer = await getCustomerByEmail(env.DB, body.email);
+          if (!customer) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "No account found with this email address"
+              }),
+              {
+                status: 404,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              api_key: customer.api_key,
+              message: "Login successful"
+            }),
+            {
+              status: 200,
               headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
             }
           );
