@@ -256,12 +256,11 @@ export function getLandingHTML(origin: string): string {
     <div class="demo">
         <h2>See It In Action</h2>
         <p>Click the chat button in the bottom right corner to try our demo bot!</p>
-        <p style="color: #999; font-size: 0.9rem;">Powered by Cloudflare Workers AI • Llama 3.1 8B</p>
     </div>
 
     <footer>
-        <p>&copy; 2024 Mistyk Media. All rights reserved.</p>
-        <p style="margin-top: 10px; opacity: 0.7;">Built with Cloudflare Workers • D1 • KV • Vectorize</p>
+        <p>&copy; 2026 Mistyk Media. All rights reserved.</p>
+        <p style="margin-top: 10px; opacity: 0.7;">Built with Cloudflare • D1 • KV • Vectorize • Llama 3.1 8B</p>
     </footer>
 
     <!-- Live Demo Widget -->
