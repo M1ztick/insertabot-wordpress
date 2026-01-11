@@ -6,24 +6,30 @@ INSERT OR REPLACE INTO customers (
   customer_id,
   email,
   company_name,
+  website_url,
   api_key,
   plan_type,
   status,
   rate_limit_per_hour,
   rate_limit_per_day,
   rag_enabled,
+  custom_branding,
+  analytics_enabled,
   created_at,
   updated_at
 ) VALUES (
-  'demo-customer-001',
-  'demo@insertabot.io',
-  'Mistyk Media (Demo)',
-  'ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f',
-  'free',
+  'cust_insertabot_001',
+  'mainsite@insertabot.io',
+  'Insertabot',
+  'https://insertabot.io',
+  'ib_sk_demo_62132eda22a524d715034a7013a7b20e2a36f93b71b588d3354d74e4024e9ed7',
+  'owner',
   'active',
   100,
   1000,
-  0,
+  1,
+  1,
+  1,
   strftime('%s','now'),
   strftime('%s','now')
 );
@@ -46,7 +52,7 @@ INSERT OR REPLACE INTO widget_configs (
   created_at,
   updated_at
 ) VALUES (
-  'demo-customer-001',
+  'cust_insertabot_001',
   '#667eea',
   'bottom-right',
   'Hi! I''m the Insertabot demo. Ask me anything about AI chatbots, Cloudflare Workers, or just say hello!',
@@ -59,8 +65,8 @@ INSERT OR REPLACE INTO widget_configs (
   'https://insertabot.io,https://api.insertabot.io,http://localhost:8787,*',
   'Type your message...',
   1,
-  CURRENT_TIMESTAMP,
-  CURRENT_TIMESTAMP
+  strftime('%s','now'),
+  strftime('%s','now')
 );
 
 -- 3. Verify the setup
