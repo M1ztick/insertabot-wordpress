@@ -212,7 +212,7 @@ export function getLandingHTML(origin: string): string {
         <div class="logo">Insertabot</div>
         <div class="nav-links">
             <a href="/playground">Playground</a>
-            <a href="/dashboard">Dashboard</a>
+            <a href="/login">Login</a>
             <a href="/signup" class="nav-cta">Get Started Free</a>
         </div>
     </nav>
@@ -237,7 +237,7 @@ export function getLandingHTML(origin: string): string {
         </div>
         <div class="feature">
             <h3>🧠 Smart AI</h3>
-            <p>Powered by Cloudflare Workers AI with web search capabilities for current information.</p>
+            <p>Advanced language models with web search capabilities for current information.</p>
         </div>
         <div class="feature">
             <h3>🔒 Secure</h3>
@@ -256,12 +256,11 @@ export function getLandingHTML(origin: string): string {
     <div class="demo">
         <h2>See It In Action</h2>
         <p>Click the chat button in the bottom right corner to try our demo bot!</p>
-        <p style="color: #999; font-size: 0.9rem;">Powered by Cloudflare Workers AI • Llama 3.1 8B</p>
     </div>
 
     <footer>
-        <p>&copy; 2024 Mistyk Media. All rights reserved.</p>
-        <p style="margin-top: 10px; opacity: 0.7;">Built with Cloudflare Workers • D1 • KV • Vectorize</p>
+        <p>&copy; 2026 Insertabot. All rights reserved.</p>
+        <p style="margin-top: 10px; opacity: 0.7;">Powered by Cloudflare Workers AI (Llama 3.1 8B) • D1 • KV • Vectorize</p>
     </footer>
 
     <!-- Live Demo Widget -->

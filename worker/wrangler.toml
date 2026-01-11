@@ -54,7 +54,14 @@ routes = [
   { pattern = "insertabot.io/*", zone_name = "insertabot.io" }
 ]
 
-# Development configuration
+# ============================================================================
+# DEVELOPMENT CONFIGURATION (ARCHIVED - NOT FOR DEPLOYMENT)
+# ============================================================================
+# This configuration is kept as a reference and failsafe only.
+# DO NOT deploy to development environment - production only.
+# To prevent accidental deployment, do not use --env=development flag.
+# ============================================================================
+
 [env.development]
 name = "insertabot-api-dev"
 

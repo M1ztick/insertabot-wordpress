@@ -47,7 +47,7 @@ npm run deploy
 cd worker
 wrangler delete
 wrangler d1 delete insertabot-production
-wrangler kv:namespace delete --namespace-id=5f08c9439c594be69c44c69a8c7aa280
+wrangler kv:namespace delete --namespace-id=YOUR_KV_NAMESPACE_ID
 wrangler vectorize delete insertabot-embeddings
 ```
 
