@@ -40,6 +40,7 @@ import { getPlaygroundHTML } from "./playground";
 import { getDashboardHTML } from "./html/dashboard";
 import { getSignupHTML } from "./html/signup";
 import { getLoginHTML } from "./html/login";
+import { getResetPasswordHTML } from "./html/reset-password";
 import { getLandingHTML } from "./html/landing";
 import { getWidgetScript } from "./html/widget-script";
 import {
@@ -766,6 +767,19 @@ export default {
           });
         }
 
+        if (url.pathname === "/reset-password" && request.method === "GET") {
+          const html = getResetPasswordHTML();
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-cache",
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            },
+          });
+        }
+
         if (url.pathname === "/dashboard" && request.method === "GET") {
           const apiKeyParam = url.searchParams.get('key');
           if (!apiKeyParam) {
@@ -924,7 +938,13 @@ export default {
         }
 
         if (url.pathname === "/favicon.ico") {
-          return new Response(null, { status: 204 });
+          return new Response(null, {
+            status: 204,
+            headers: {
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            }
+          });
         }
 
         if (url.pathname === "/health" && request.method === "GET") {
