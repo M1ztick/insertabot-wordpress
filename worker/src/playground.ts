@@ -42,6 +42,15 @@ export function getPlaygroundHTML(origin: string): string {
             gap: 16px;
         }
 
+        .mascot-image {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            object-fit: cover;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border: 2px solid rgba(255,255,255,0.3);
+        }
+
         .header-title h1 {
             font-size: 24px;
             font-weight: 700;
@@ -261,6 +270,7 @@ export function getPlaygroundHTML(origin: string): string {
     <div class="playground-container">
         <div class="playground-header">
             <div class="header-info">
+                <img src="${origin}/insertabot-mascot.png" alt="Insertabot Mascot" class="mascot-image" />
                 <div class="header-title">
                     <h1>Insertabot Playground</h1>
                     <p>Chat with AI, test unlimited ideas</p>

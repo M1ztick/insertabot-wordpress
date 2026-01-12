@@ -219,7 +219,8 @@ export function getLandingHTML(origin: string): string {
     <div class="hero">
         <img src="/logo.png" alt="Insertabot Logo" style="max-width: 200px; margin-bottom: 20px;">
         <h1>Insertabot</h1>
-        <p>AI-Powered Chatbot Widget for Your Website</p>
+        <h2 style="font-size: 2em; margin: 20px 0 10px 0; font-weight: 700;">Insert an AI chatbot on your website in a flash!</h2>
+        <h3 style="font-size: 1.3em; margin: 0 0 30px 0; font-weight: 400; background: linear-gradient(135deg, #00f5ff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Traveling at the speed of innovation</h3>
         <div style="display: flex; gap: 20px; justify-content: center; align-items: center;">
             <a href="/signup" class="cta-button">Get Started Free</a>
             <a href="/playground" class="cta-button" style="background: transparent; border: 2px solid #00f5ff; box-shadow: none;">Try Live Demo →</a>
@@ -237,7 +238,7 @@ export function getLandingHTML(origin: string): string {
         </div>
         <div class="feature">
             <h3>🧠 Smart AI</h3>
-            <p>Advanced language models with web search capabilities for current information.</p>
+            <p>Integrated with <span style="color: #00f5ff; font-weight: 700; text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);">Tavily</span> for current web search capabilities.</p>
         </div>
         <div class="feature">
             <h3>🔒 Secure</h3>
@@ -245,11 +246,11 @@ export function getLandingHTML(origin: string): string {
         </div>
         <div class="feature">
             <h3>💳 Stripe Integration</h3>
-            <p>Built-in subscription management with Stripe for easy monetization.</p>
+            <p>Accept payments seamlessly with Stripe - credit cards, digital wallets, and more.</p>
         </div>
         <div class="feature">
-            <h3>📊 Analytics</h3>
-            <p>Track usage and performance with built-in analytics engine.</p>
+            <h3>📚 RAG Support</h3>
+            <p>Vectorize integration enables context-aware responses using your custom knowledge base.</p>
         </div>
     </div>
 
@@ -260,7 +261,7 @@ export function getLandingHTML(origin: string): string {
 
     <footer>
         <p>&copy; 2026 Insertabot. All rights reserved.</p>
-        <p style="margin-top: 10px; opacity: 0.7;">Powered by Cloudflare Workers AI (Llama 3.1 8B) • D1 • KV • Vectorize</p>
+        <p style="margin-top: 10px; opacity: 0.7;">Powered by Cloudflare Workers AI • D1 • KV • Vectorize</p>
     </footer>
 
     <!-- Live Demo Widget -->
