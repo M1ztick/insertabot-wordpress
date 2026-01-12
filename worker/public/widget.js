@@ -340,7 +340,7 @@
         </form>
         ${widgetConfig.show_branding
           ? `<div style="text-align: center; margin-top: 8px; font-size: 11px; color: #9ca3af;">
-               Powered by <a href="https://insertabot.io" target="_blank" style="color: #60a5fa; text-decoration: none;">Insertabot</a>
+               Powered by <a href="https://www.llama.com/" target="_blank" style="color: #60a5fa; text-decoration: none;">Llama 3.1 8B</a>
              </div>`
           : ''
         }

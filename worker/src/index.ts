@@ -24,6 +24,18 @@ import {
   getCustomerByEmail,
   updateWidgetConfig,
 } from "./customer";
+import {
+  handleSetPassword,
+  handleLogin,
+  handleLogout,
+  handleChangePassword,
+  handleEnable2FA,
+  handleVerify2FA,
+  handleDisable2FA,
+  handlePasswordResetRequest,
+  handlePasswordReset,
+} from "./auth-endpoints";
+import { getSession, getSessionIdFromRequest } from "./session";
 import { getPlaygroundHTML } from "./playground";
 import { getDashboardHTML } from "./html/dashboard";
 import { getSignupHTML } from "./html/signup";
@@ -144,7 +156,7 @@ function isOriginAllowed(origin: string, allowedDomains: string | null): boolean
 function createCorsHeaders(origin: string, allowed: boolean): HeadersInit {
   return {
     "Access-Control-Allow-Origin": allowed ? origin : "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
@@ -654,7 +666,10 @@ export default {
     const publicRoutes = [
       '/', '/signup', '/login', '/playground', '/health', '/dashboard',
       '/favicon.ico', '/logo.png', '/widget.js',
-      '/v1/stripe/webhook', '/checkout-success', '/api/customer/create', '/api/customer/login'
+      '/v1/stripe/webhook', '/checkout-success',
+      '/api/customer/create', '/api/customer/login',
+      '/api/auth/set-password', '/api/auth/password-reset-request', '/api/auth/password-reset',
+      '/reset-password'
     ];
     
     if (publicRoutes.includes(url.pathname)) {
@@ -801,9 +816,39 @@ export default {
           );
         }
 
+        // New password-based login endpoint
         if (url.pathname === "/api/customer/login" && request.method === "POST") {
-          const body = await request.json() as { email: string };
+          const body = await request.json() as { email: string; password?: string; totp_code?: string; backup_code?: string };
 
+          // If password is provided, use new authentication
+          if (body.password) {
+            const result = await handleLogin(
+              env.DB,
+              { email: body.email, password: body.password, totp_code: body.totp_code, backup_code: body.backup_code },
+              clientIP,
+              request.headers.get('User-Agent')
+            );
+
+            const responseHeaders: HeadersInit = {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+              ...SECURITY_HEADERS,
+            };
+
+            if (result.sessionCookie) {
+              (responseHeaders as Record<string, string>)['Set-Cookie'] = result.sessionCookie;
+            }
+
+            return new Response(
+              JSON.stringify(result.response),
+              {
+                status: result.response.success ? 200 : 401,
+                headers: responseHeaders,
+              }
+            );
+          }
+
+          // Legacy email-only login (deprecated - for backwards compatibility)
           const customer = await getCustomerByEmail(env.DB, body.email);
           if (!customer) {
             return new Response(
@@ -824,6 +869,53 @@ export default {
               api_key: customer.api_key,
               message: "Login successful"
             }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Set password (first-time setup)
+        if (url.pathname === "/api/auth/set-password" && request.method === "POST") {
+          const body = await request.json() as { email: string; password: string };
+          const result = await handleSetPassword(
+            env.DB,
+            body,
+            clientIP,
+            request.headers.get('User-Agent')
+          );
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Password reset request
+        if (url.pathname === "/api/auth/password-reset-request" && request.method === "POST") {
+          const body = await request.json() as { email: string };
+          const result = await handlePasswordResetRequest(env.DB, body.email, clientIP);
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Password reset with token
+        if (url.pathname === "/api/auth/password-reset" && request.method === "POST") {
+          const body = await request.json() as { token: string; new_password: string };
+          const result = await handlePasswordReset(env.DB, body, clientIP);
+
+          return new Response(
+            JSON.stringify(result),
             {
               status: 200,
               headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
@@ -950,6 +1042,124 @@ export default {
             headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
           }
         );
+      }
+
+      // Session-based authenticated endpoints (use session instead of API key)
+      const sessionId = getSessionIdFromRequest(request);
+      if (sessionId) {
+        const session = await getSession(env.DB, sessionId);
+        if (session) {
+          const sessionCustomerId = session.customer_id;
+
+          // Logout
+          if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+            const result = await handleLogout(env.DB, sessionId, clientIP);
+
+            return new Response(
+              JSON.stringify({ success: true, message: "Logged out successfully" }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Set-Cookie": result.cookie,
+                  ...corsHeaders,
+                  ...SECURITY_HEADERS,
+                },
+              }
+            );
+          }
+
+          // Change password
+          if (url.pathname === "/api/auth/change-password" && request.method === "POST") {
+            const body = await request.json() as { current_password: string; new_password: string };
+            const result = await handleChangePassword(
+              env.DB,
+              sessionCustomerId,
+              body,
+              clientIP,
+              request.headers.get('User-Agent')
+            );
+
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          // Enable 2FA (step 1: get QR code and backup codes)
+          if (url.pathname === "/api/auth/2fa/enable" && request.method === "POST") {
+            // Get email from session
+            const customerData = await withDatabase(
+              async () => env.DB.prepare('SELECT email FROM customers WHERE customer_id = ?')
+                .bind(sessionCustomerId)
+                .first<{ email: string }>(),
+              'getCustomerEmail'
+            );
+
+            if (!customerData) {
+              throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Customer not found');
+            }
+
+            const result = await handleEnable2FA(
+              env.DB,
+              sessionCustomerId,
+              customerData.email,
+              clientIP,
+              request.headers.get('User-Agent')
+            );
+
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          // Verify and activate 2FA (step 2: verify the TOTP code)
+          if (url.pathname === "/api/auth/2fa/verify" && request.method === "POST") {
+            const body = await request.json() as { totp_code: string };
+            const result = await handleVerify2FA(
+              env.DB,
+              sessionCustomerId,
+              body,
+              clientIP,
+              request.headers.get('User-Agent')
+            );
+
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+
+          // Disable 2FA
+          if (url.pathname === "/api/auth/2fa/disable" && request.method === "POST") {
+            const body = await request.json() as { password: string };
+            const result = await handleDisable2FA(
+              env.DB,
+              sessionCustomerId,
+              body.password,
+              clientIP,
+              request.headers.get('User-Agent')
+            );
+
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+              }
+            );
+          }
+        }
       }
 
       throw new AppError(ErrorCode.INVALID_REQUEST, 'Endpoint not found', 404);
