@@ -143,7 +143,7 @@ function isOriginAllowed(origin: string, allowedDomains: string | null): boolean
 // CORS helper with Vary header for proper caching
 function createCorsHeaders(origin: string, allowed: boolean): HeadersInit {
   return {
-    "Access-Control-Allow-Origin": allowed ? origin : "null",
+    "Access-Control-Allow-Origin": allowed ? origin : "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
     "Access-Control-Max-Age": "86400",

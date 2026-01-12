@@ -264,7 +264,7 @@ export function getLandingHTML(origin: string): string {
     </footer>
 
     <!-- Live Demo Widget -->
-    <script src="${origin}/widget.js" data-api-key="ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f"></script>
+    <script src="${origin}/widget.js" data-api-key="ib_sk_demo_62132eda22a524d715034a7013a7b20e2a36f93b71b588d3354d74e4024e9ed7"></script>
 </body>
 </html>`;
 }
