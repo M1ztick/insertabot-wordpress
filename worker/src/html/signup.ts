@@ -165,6 +165,38 @@ export function getSignupHTML(): string {
         .back-link a:hover {
             text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
         }
+        .password-strength {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .strength-bar {
+            height: 4px;
+            background: rgba(0, 245, 255, 0.1);
+            border-radius: 2px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+        .strength-fill {
+            height: 100%;
+            width: 0%;
+            transition: all 0.3s;
+            border-radius: 2px;
+        }
+        .strength-weak { width: 33%; background: #ff0055; }
+        .strength-medium { width: 66%; background: #ffa500; }
+        .strength-strong { width: 100%; background: #00ff88; }
+        .password-requirements {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #64748b;
+        }
+        .requirement {
+            margin: 2px 0;
+        }
+        .requirement.met {
+            color: #00ff88;
+        }
     </style>
 </head>
 <body>
@@ -185,6 +217,23 @@ export function getSignupHTML(): string {
                 <label>Company Name</label>
                 <input type="text" name="company_name" required placeholder="Your Company" />
             </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" id="password" required placeholder="Create a secure password" />
+                <div class="password-strength">
+                    <div class="strength-bar">
+                        <div class="strength-fill" id="strength-fill"></div>
+                    </div>
+                    <span id="strength-text">Password strength</span>
+                </div>
+                <div class="password-requirements">
+                    <div class="requirement" id="req-length">• At least 12 characters</div>
+                    <div class="requirement" id="req-upper">• One uppercase letter</div>
+                    <div class="requirement" id="req-lower">• One lowercase letter</div>
+                    <div class="requirement" id="req-number">• One number</div>
+                    <div class="requirement" id="req-special">• One special character</div>
+                </div>
+            </div>
             <button type="submit" class="btn" id="submit-btn">Create Free Account</button>
         </form>
 
@@ -201,12 +250,50 @@ export function getSignupHTML(): string {
     </div>
 
     <script>
+        // Password strength checker
+        const passwordInput = document.getElementById('password');
+        const strengthFill = document.getElementById('strength-fill');
+        const strengthText = document.getElementById('strength-text');
+
+        passwordInput.addEventListener('input', (e) => {
+            const password = e.target.value;
+            const checks = {
+                length: password.length >= 12,
+                upper: /[A-Z]/.test(password),
+                lower: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                special: /[^a-zA-Z0-9]/.test(password)
+            };
+
+            // Update requirement indicators
+            document.getElementById('req-length').classList.toggle('met', checks.length);
+            document.getElementById('req-upper').classList.toggle('met', checks.upper);
+            document.getElementById('req-lower').classList.toggle('met', checks.lower);
+            document.getElementById('req-number').classList.toggle('met', checks.number);
+            document.getElementById('req-special').classList.toggle('met', checks.special);
+
+            // Calculate strength
+            const metCount = Object.values(checks).filter(v => v).length;
+            strengthFill.className = 'strength-fill';
+
+            if (metCount <= 2) {
+                strengthFill.classList.add('strength-weak');
+                strengthText.textContent = 'Weak password';
+            } else if (metCount <= 4) {
+                strengthFill.classList.add('strength-medium');
+                strengthText.textContent = 'Medium password';
+            } else {
+                strengthFill.classList.add('strength-strong');
+                strengthText.textContent = 'Strong password';
+            }
+        });
+
         document.getElementById('signup-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const btn = document.getElementById('submit-btn');
             const errorMsg = document.getElementById('error-msg');
-            
+
             btn.disabled = true;
             btn.textContent = 'Creating account...';
             errorMsg.style.display = 'none';
@@ -215,6 +302,7 @@ export function getSignupHTML(): string {
             const data = Object.fromEntries(formData);
 
             try {
+                // Create account
                 const response = await fetch('/api/customer/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -224,10 +312,40 @@ export function getSignupHTML(): string {
                 const result = await response.json();
 
                 if (response.ok) {
-                    // amazonq-ignore-next-line
-                    window.location.href = '/dashboard?key=' + result.api_key;
+                    // Set password for the account
+                    const setPasswordResponse = await fetch('/api/auth/set-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: data.email,
+                            password: data.password
+                        })
+                    });
+
+                    if (setPasswordResponse.ok) {
+                        // Auto-login after signup
+                        const loginResponse = await fetch('/api/customer/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                email: data.email,
+                                password: data.password
+                            })
+                        });
+
+                        const loginResult = await loginResponse.json();
+                        if (loginResult.success && loginResult.session_id) {
+                            window.location.href = '/dashboard';
+                        } else {
+                            // Fallback to API key access
+                            window.location.href = '/dashboard?key=' + result.api_key;
+                        }
+                    } else {
+                        // If password set fails, still redirect but show message
+                        window.location.href = '/dashboard?key=' + result.api_key;
+                    }
                 } else {
-                    errorMsg.textContent = result.error || 'Failed to create account';
+                    errorMsg.textContent = result.error || result.message || 'Failed to create account';
                     errorMsg.style.display = 'block';
                     btn.disabled = false;
                     btn.textContent = 'Create Free Account';

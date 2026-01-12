@@ -155,10 +155,32 @@ export function getLoginHTML(): string {
         <form id="login-form">
             <div class="form-group">
                 <label>Email Address</label>
-                <input type="email" name="email" required placeholder="you@company.com" autofocus />
+                <input type="email" name="email" id="email" required placeholder="you@company.com" autofocus />
             </div>
-            <button type="submit" class="btn" id="submit-btn">Access Dashboard</button>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" id="password" required placeholder="Enter your password" />
+            </div>
+            <div class="form-group" id="2fa-group" style="display: none;">
+                <label>2FA Code (6 digits)</label>
+                <input type="text" name="totp_code" id="totp_code" placeholder="000000" maxlength="6" pattern="[0-9]{6}" />
+                <div style="margin-top: 8px; font-size: 12px; color: #64748b;">
+                    Or use a <a href="#" id="use-backup-code" style="color: #00f5ff;">backup code</a>
+                </div>
+            </div>
+            <div class="form-group" id="backup-group" style="display: none;">
+                <label>Backup Code</label>
+                <input type="text" name="backup_code" id="backup_code" placeholder="Enter backup code" />
+                <div style="margin-top: 8px; font-size: 12px; color: #64748b;">
+                    Or use your <a href="#" id="use-2fa-code" style="color: #00f5ff;">2FA code</a>
+                </div>
+            </div>
+            <button type="submit" class="btn" id="submit-btn">Log In</button>
         </form>
+
+        <div style="margin-top: 16px; text-align: center;">
+            <a href="/reset-password" style="color: #00f5ff; font-size: 14px; text-decoration: none;">Forgot password?</a>
+        </div>
 
         <div class="help-text">
             <strong>Don't have an account?</strong><br>
@@ -171,6 +193,23 @@ export function getLoginHTML(): string {
     </div>
 
     <script>
+        // Toggle between 2FA code and backup code
+        document.getElementById('use-backup-code')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('2fa-group').style.display = 'none';
+            document.getElementById('backup-group').style.display = 'block';
+            document.getElementById('totp_code').value = '';
+            document.getElementById('backup_code').focus();
+        });
+
+        document.getElementById('use-2fa-code')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('backup-group').style.display = 'none';
+            document.getElementById('2fa-group').style.display = 'block';
+            document.getElementById('backup_code').value = '';
+            document.getElementById('totp_code').focus();
+        });
+
         document.getElementById('login-form').addEventListener('submit', async (e) => {
             e.preventDefault();
 
@@ -179,12 +218,17 @@ export function getLoginHTML(): string {
             const successMsg = document.getElementById('success-msg');
 
             btn.disabled = true;
-            btn.textContent = 'Looking up account...';
+            btn.textContent = 'Logging in...';
             errorMsg.style.display = 'none';
             successMsg.style.display = 'none';
 
             const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData);
+            const data = {
+                email: formData.get('email'),
+                password: formData.get('password'),
+                totp_code: formData.get('totp_code') || undefined,
+                backup_code: formData.get('backup_code') || undefined
+            };
 
             try {
                 const response = await fetch('/api/customer/login', {
@@ -195,25 +239,43 @@ export function getLoginHTML(): string {
 
                 const result = await response.json();
 
-                if (response.ok && result.api_key) {
-                    successMsg.textContent = 'Account found! Redirecting to dashboard...';
+                if (result.success && result.session_id) {
+                    // Successful login with session
+                    successMsg.textContent = 'Login successful! Redirecting...';
                     successMsg.style.display = 'block';
 
-                    // Redirect to dashboard with API key
                     setTimeout(() => {
-                        window.location.href = '/dashboard?key=' + result.api_key;
-                    }, 1000);
-                } else {
-                    errorMsg.textContent = result.message || 'Account not found. Please check your email or sign up.';
+                        window.location.href = '/dashboard';
+                    }, 500);
+                } else if (result.requires_2fa) {
+                    // 2FA required - show 2FA input
+                    document.getElementById('2fa-group').style.display = 'block';
+                    document.getElementById('totp_code').required = true;
+                    document.getElementById('totp_code').focus();
+                    errorMsg.textContent = 'Please enter your 2FA code';
                     errorMsg.style.display = 'block';
                     btn.disabled = false;
-                    btn.textContent = 'Access Dashboard';
+                    btn.textContent = 'Verify 2FA';
+                } else if (response.ok && result.api_key) {
+                    // Legacy login (no password set) - fallback
+                    successMsg.textContent = 'Login successful! Redirecting...';
+                    successMsg.style.display = 'block';
+
+                    setTimeout(() => {
+                        window.location.href = '/dashboard?key=' + result.api_key;
+                    }, 500);
+                } else {
+                    // Login failed
+                    errorMsg.textContent = result.message || 'Invalid email or password';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Log In';
                 }
             } catch (error) {
                 errorMsg.textContent = 'Network error. Please try again.';
                 errorMsg.style.display = 'block';
                 btn.disabled = false;
-                btn.textContent = 'Access Dashboard';
+                btn.textContent = 'Log In';
             }
         });
     </script>
