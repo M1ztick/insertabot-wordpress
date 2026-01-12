@@ -137,7 +137,8 @@ deploy() {
     if [ "$ENVIRONMENT" = "production" ]; then
         npm run deploy
     else
-        npm run deploy:dev
+        log_warning "Development deployments are disabled. Use production deployment only."
+        npm run deploy
     fi
     
     log_success "Deployment completed"
@@ -149,15 +150,11 @@ verify_deployment() {
     
     # Get the deployment URL from wrangler
     cd "$WORKER_DIR"
-    DEPLOYMENT_URL=$(wrangler deployments list --name insertabot-api${ENVIRONMENT:+-dev} --format json 2>/dev/null | jq -r '.[0].url // empty' || echo "")
     
-    if [ -z "$DEPLOYMENT_URL" ]; then
-        if [ "$ENVIRONMENT" = "production" ]; then
-            DEPLOYMENT_URL="https://insertabot-api.*.workers.dev"
-        else
-            DEPLOYMENT_URL="https://insertabot-api-dev.*.workers.dev"
-        fi
-        log_warning "Could not get exact deployment URL, using placeholder: $DEPLOYMENT_URL"
+    if [ "$ENVIRONMENT" = "production" ]; then
+        DEPLOYMENT_URL="https://insertabot.io"
+    else
+        DEPLOYMENT_URL="https://insertabot-api.workers.dev"
     fi
     
     log_info "Deployment URL: $DEPLOYMENT_URL"
@@ -191,11 +188,14 @@ post_deployment() {
         # In production, be more careful with migrations
         log_info "Production database migration (manual confirmation required)"
         log_warning "Please review and run migrations manually if needed:"
-        log_warning "  wrangler d1 execute insertabot-production --file=../schema.sql"
+        log_warning "  ./scripts/run-auth-migration.sh production"
     else
         # Development - run migrations automatically
         log_info "Running development database migrations..."
-        wrangler d1 execute insertabot-development --local --file=../schema.sql || log_warning "Migration may have already been applied"
+        if [ -f "../migrations/001_add_auth_fields.sql" ]; then
+            wrangler d1 execute insertabot-production --file=../migrations/001_add_auth_fields.sql || log_warning "Migration may have already been applied"
+        fi
+        wrangler d1 execute insertabot-production --file=../schema.sql || log_warning "Schema may have already been applied"
     fi
     
     log_success "Post-deployment tasks completed"
@@ -211,14 +211,13 @@ display_summary() {
     echo ""
     echo "Next steps:"
     if [ "$ENVIRONMENT" = "development" ]; then
-        echo "  • Test the API with: npm run test"
+        echo "  • Test the API with: node scripts/test-api.js"
         echo "  • View logs with: cd worker && npm run tail"
-        echo "  • Open widget demo: cd widget && python3 -m http.server 8000"
+        echo "  • Open widget demo at: http://localhost:8000"
     else
-        echo "  • Set up custom domain in Cloudflare Dashboard"
-        echo "  • Configure AI Gateway secrets if not done already"
-        echo "  • Update DNS records for your domain"
-        echo "  • Set up monitoring and alerts"
+        echo "  • Test the API at: https://insertabot.io/health"
+        echo "  • Monitor logs with: cd worker && npm run tail"
+        echo "  • Run auth migration: ./scripts/run-auth-migration.sh production"
     fi
     echo ""
     echo "Useful commands:"

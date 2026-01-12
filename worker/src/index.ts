@@ -156,7 +156,7 @@ function isOriginAllowed(origin: string, allowedDomains: string | null): boolean
 function createCorsHeaders(origin: string, allowed: boolean): HeadersInit {
   return {
     "Access-Control-Allow-Origin": allowed ? origin : "*",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin",
