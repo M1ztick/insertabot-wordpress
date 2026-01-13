@@ -3,6 +3,8 @@
  * Multi-tenant chatbot service with AI Gateway integration
  */
 
+/// <reference types="@cloudflare/workers-types" />
+
 import { getRelevantContext } from "./rag";
 import { StructuredLogger } from "./monitoring";
 import {
