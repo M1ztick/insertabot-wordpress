@@ -3,7 +3,12 @@
  * Multi-tenant chatbot service with AI Gateway integration
  */
 
-/// <reference types="@cloudflare/workers-types" />
+// Define Cloudflare Workers types
+type D1Database = any;
+type VectorizeIndex = any;
+type KVNamespace = any;
+type AnalyticsEngineDataset = any;
+type ExecutionContext = any;
 
 import { getRelevantContext } from "./rag";
 import { StructuredLogger } from "./monitoring";
@@ -233,13 +238,13 @@ async function getCustomerConfig(
     throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Invalid API key format');
   }
   
-  const config = await fetchSingle<CustomerConfig>(
+  const config = await fetchSingle(
     db,
     `SELECT customer_id, api_key, plan_type, status, rate_limit_per_hour, rate_limit_per_day, rag_enabled
 		 FROM customers WHERE api_key = ? AND status = 'active'`,
     [apiKey],
     'getCustomerConfig'
-  );
+  ) as CustomerConfig | null;
   
   if (!config) {
     throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Invalid or inactive API key');
@@ -252,7 +257,7 @@ async function getWidgetConfig(
   db: D1Database,
   customerId: string
 ): Promise<WidgetConfig> {
-  const config = await fetchSingle<WidgetConfig>(
+  const config = await fetchSingle(
     db,
     `SELECT primary_color, position, greeting_message, bot_name, bot_avatar_url,
 		        model, temperature, max_tokens, system_prompt, allowed_domains,
@@ -261,7 +266,7 @@ async function getWidgetConfig(
 		 FROM widget_configs WHERE customer_id = ?`,
     [customerId],
     'getWidgetConfig'
-  );
+  ) as WidgetConfig | null;
   
   if (!config) {
     throw new AppError(ErrorCode.CONFIG_NOT_FOUND, 'Widget configuration not found');
@@ -476,7 +481,7 @@ async function handleChatRequest(
       };
     });
 
-    const responseText = aiResponse?.result?.response || aiResponse?.response || "";
+    const responseText = (aiResponse as any)?.result?.response || (aiResponse as any)?.response || "";
 
     if (!isCoherentResponse(responseText)) {
       logger.warn("Incoherent response detected", {
@@ -1117,9 +1122,9 @@ export default {
             const customerData = await withDatabase(
               async () => env.DB.prepare('SELECT email FROM customers WHERE customer_id = ?')
                 .bind(sessionCustomerId)
-                .first<{ email: string }>(),
+                .first(),
               'getCustomerEmail'
-            );
+            ) as { email: string } | null;
 
             if (!customerData) {
               throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Customer not found');
