@@ -625,12 +625,10 @@ export async function handlePasswordResetRequest(
 		ip_address: ipAddress || undefined,
 	});
 
-	// In production, send email with reset link
-	// For now, return the token for testing
+	// TODO: Send email with reset link
 	return {
 		success: true,
-		message: 'Password reset link sent',
-		reset_token: resetToken, // Remove this in production
+		message: 'If an account exists with this email, a password reset link has been sent.',
 	};
 }
 

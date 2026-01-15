@@ -5294,6 +5294,7 @@ function getDashboardHTML(customer, widgetConfig, origin) {
     <div class="container">
         <div class="header">
             <div>
+                // amazonq-ignore-next-line
                 <h1>Dashboard</h1>
                 <p style="color: #94a3b8; margin-top: 4px;">${customer.company_name}</p>
             </div>

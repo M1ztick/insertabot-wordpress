@@ -263,7 +263,8 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
         function copy(text) {
             navigator.clipboard.writeText(text).then(() => {
                 alert('Copied to clipboard!');
-            }).catch(() => {
+            }).catch((err) => {
+                console.error('Copy failed:', err);
                 alert('Failed to copy to clipboard');
             });
         }
@@ -273,20 +274,27 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
             const formData = new FormData(e.target);
             const data = Object.fromEntries(formData);
 
-            const response = await fetch('/api/customer/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': '${escapeHtml(customer.api_key)}'
-                },
-                body: JSON.stringify(data)
-            });
+            try {
+                const response = await fetch('/api/customer/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': '${escapeHtml(customer.api_key)}'
+                    },
+                    body: JSON.stringify(data)
+                });
 
-            if (response.ok) {
-                document.getElementById('success-msg').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('success-msg').style.display = 'none';
-                }, 3000);
+                if (response.ok) {
+                    document.getElementById('success-msg').style.display = 'block';
+                    setTimeout(() => {
+                        document.getElementById('success-msg').style.display = 'none';
+                    }, 3000);
+                } else {
+                    throw new Error('Failed to save settings');
+                }
+            } catch (err) {
+                console.error('Save failed:', err);
+                alert('Failed to save settings. Please try again.');
             }
         });
     </script>
