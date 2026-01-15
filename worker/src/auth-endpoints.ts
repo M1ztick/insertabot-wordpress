@@ -154,6 +154,7 @@ export async function handleLogin(
 	);
 
 	if (!customer) {
+		// Generic error message to prevent user enumeration attacks
 		throw new AuthenticationError(ErrorCode.INVALID_API_KEY, 'Invalid email or password');
 	}
 

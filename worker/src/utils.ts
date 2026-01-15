@@ -21,6 +21,21 @@ export function generateCustomerId(): string {
 }
 
 /**
+ * Escapes HTML special characters to prevent XSS attacks
+ * @param str - The string to escape
+ * @returns The escaped string safe for insertion into HTML
+ */
+export function escapeHtml(str: string | null | undefined): string {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
  * Extracts text content from multi-part messages
  * Handles both string messages and array-based multi-modal messages
  */
