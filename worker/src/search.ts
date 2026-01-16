@@ -130,6 +130,36 @@ ${result.content}${result.published_date ? `\nPublished: ${result.published_date
 export function shouldPerformSearch(message: string): boolean {
   const lowerMessage = message.toLowerCase();
 
+  // Exclude contextual/local questions that don't need web search
+  const localContextIndicators = [
+    "this website",
+    "this site",
+    "this page",
+    "your website",
+    "your site",
+    "your company",
+    "your business",
+    "your services",
+    "your product",
+    "you do",
+    "you offer",
+    "you help",
+    "you work",
+    "about you",
+  ];
+
+  // Don't search if it's a question about the current website/context
+  const isLocalQuestion = localContextIndicators.some((indicator) =>
+    lowerMessage.includes(indicator),
+  );
+
+  if (isLocalQuestion) {
+    console.log(
+      `[Search] Skipping search - local/contextual question: "${message.substring(0, 50)}..."`,
+    );
+    return false;
+  }
+
   // Keywords that indicate need for current information
   const searchIndicators = [
     "latest",
@@ -149,7 +179,6 @@ export function shouldPerformSearch(message: string): boolean {
     "search for",
     "look up",
     "find information",
-    "tell me about",
   ];
 
   // Check if message contains search indicators
