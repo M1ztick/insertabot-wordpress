@@ -103,9 +103,9 @@ Login with email and password (with optional 2FA).
 ```json
 {
   "email": "user@example.com",
-  "password": "SecurePassword123!",
-  "totp_code": "123456",  // Optional, required if 2FA is enabled
-  "backup_code": "ABC12345"  // Alternative to totp_code
+  "password": "<your_password>",
+  "totp_code": "<totp_code>",  // Optional, required if 2FA is enabled
+  "backup_code": "<backup_code>"  // Alternative to totp_code
 }
 ```
 
@@ -113,7 +113,7 @@ Login with email and password (with optional 2FA).
 ```json
 {
   "success": true,
-  "session_id": "uuid-timestamp",
+  "session_id": "<session_id>",
   "message": "Login successful"
 }
 ```
@@ -134,7 +134,7 @@ Set password for an account (first-time setup).
 ```json
 {
   "email": "user@example.com",
-  "password": "SecurePassword123!"
+  "password": "<your_password>"
 }
 ```
 
@@ -154,8 +154,8 @@ Reset password using token.
 **Request:**
 ```json
 {
-  "token": "reset_token_here",
-  "new_password": "NewSecurePassword123!"
+  "token": "<reset_token>",
+  "new_password": "<new_password>"
 }
 ```
 
@@ -172,8 +172,8 @@ Change password (requires current password).
 **Request:**
 ```json
 {
-  "current_password": "OldPassword123!",
-  "new_password": "NewPassword123!"
+  "current_password": "<current_password>",
+  "new_password": "<new_password>"
 }
 ```
 
@@ -184,9 +184,9 @@ Generate 2FA secret and backup codes.
 ```json
 {
   "success": true,
-  "secret": "BASE32_SECRET",
-  "qr_uri": "otpauth://totp/Insertabot:user@example.com?secret=...",
-  "backup_codes": ["ABC12345", "DEF67890", ...]
+  "secret": "<base32_secret>",
+  "qr_uri": "otpauth://totp/Insertabot:user@example.com?secret=<secret>",
+  "backup_codes": ["<code1>", "<code2>", ...]
 }
 ```
 
@@ -196,7 +196,7 @@ Verify and activate 2FA with TOTP code.
 **Request:**
 ```json
 {
-  "totp_code": "123456"
+  "totp_code": "<totp_code>"
 }
 ```
 
@@ -206,7 +206,7 @@ Disable 2FA (requires password confirmation).
 **Request:**
 ```json
 {
-  "password": "CurrentPassword123!"
+  "password": "<your_password>"
 }
 ```
 

@@ -2,6 +2,8 @@
  * Customer Dashboard HTML
  */
 
+import { escapeHtml } from '../utils';
+
 export function getDashboardHTML(customer: any, widgetConfig: any, origin: string): string {
 	const embedCode = `<script src="${origin}/widget.js" data-api-key="${customer.api_key}"></script>`;
 	
@@ -195,9 +197,9 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
         <div class="header">
             <div>
                 <h1>Dashboard</h1>
-                <p style="color: #94a3b8; margin-top: 4px;">${customer.company_name}</p>
+                <p style="color: #94a3b8; margin-top: 4px;">${escapeHtml(customer.company_name)}</p>
             </div>
-            <div class="plan-badge">${customer.plan_type} Plan</div>
+            <div class="plan-badge">${escapeHtml(customer.plan_type)} Plan</div>
         </div>
 
         <div id="success-msg" class="success">Settings saved successfully!</div>
@@ -206,14 +208,14 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
             <div class="card">
                 <h2>🔑 API Key</h2>
                 <div class="code-box">
-                    ${customer.api_key}
-                    <button class="copy-btn" onclick="copy('${customer.api_key}')">Copy</button>
+                    ${escapeHtml(customer.api_key)}
+                    <button class="copy-btn" onclick="copy('${escapeHtml(customer.api_key)}')">Copy</button>
                 </div>
             </div>
 
             <div class="card">
                 <h2>📊 Usage</h2>
-                <div class="stat">${customer.rate_limit_per_day}</div>
+                <div class="stat">${escapeHtml(String(customer.rate_limit_per_day))}</div>
                 <div class="stat-label">Messages per day</div>
             </div>
         </div>
@@ -234,23 +236,23 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
             <form id="config-form">
                 <div class="form-group">
                     <label>Bot Name</label>
-                    <input type="text" name="bot_name" value="${widgetConfig.bot_name}" />
+                    <input type="text" name="bot_name" value="${escapeHtml(widgetConfig.bot_name)}" />
                 </div>
                 <div class="form-group">
                     <label>Bot Avatar URL (optional)</label>
-                    <input type="url" name="bot_avatar_url" value="${widgetConfig.bot_avatar_url || ''}" placeholder="https://example.com/logo.png" />
+                    <input type="url" name="bot_avatar_url" value="${escapeHtml(widgetConfig.bot_avatar_url || '')}" placeholder="https://example.com/logo.png" />
                 </div>
                 <div class="form-group">
                     <label>Primary Color</label>
-                    <input type="color" name="primary_color" value="${widgetConfig.primary_color}" />
+                    <input type="color" name="primary_color" value="${escapeHtml(widgetConfig.primary_color)}" />
                 </div>
                 <div class="form-group">
                     <label>Greeting Message</label>
-                    <input type="text" name="greeting_message" value="${widgetConfig.greeting_message}" />
+                    <input type="text" name="greeting_message" value="${escapeHtml(widgetConfig.greeting_message)}" />
                 </div>
                 <div class="form-group">
                     <label>System Prompt</label>
-                    <textarea name="system_prompt" rows="4">${widgetConfig.system_prompt}</textarea>
+                    <textarea name="system_prompt" rows="4">${escapeHtml(widgetConfig.system_prompt)}</textarea>
                 </div>
                 <button type="submit" class="btn">Save Changes</button>
             </form>
@@ -259,8 +261,12 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
 
     <script>
         function copy(text) {
-            navigator.clipboard.writeText(text);
-            alert('Copied to clipboard!');
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            }).catch((err) => {
+                console.error('Copy failed:', err);
+                alert('Failed to copy to clipboard');
+            });
         }
 
         document.getElementById('config-form').addEventListener('submit', async (e) => {
@@ -268,20 +274,27 @@ export function getDashboardHTML(customer: any, widgetConfig: any, origin: strin
             const formData = new FormData(e.target);
             const data = Object.fromEntries(formData);
 
-            const response = await fetch('/api/customer/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': '${customer.api_key}'
-                },
-                body: JSON.stringify(data)
-            });
+            try {
+                const response = await fetch('/api/customer/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': '${escapeHtml(customer.api_key)}'
+                    },
+                    body: JSON.stringify(data)
+                });
 
-            if (response.ok) {
-                document.getElementById('success-msg').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('success-msg').style.display = 'none';
-                }, 3000);
+                if (response.ok) {
+                    document.getElementById('success-msg').style.display = 'block';
+                    setTimeout(() => {
+                        document.getElementById('success-msg').style.display = 'none';
+                    }, 3000);
+                } else {
+                    throw new Error('Failed to save settings');
+                }
+            } catch (err) {
+                console.error('Save failed:', err);
+                alert('Failed to save settings. Please try again.');
             }
         });
     </script>

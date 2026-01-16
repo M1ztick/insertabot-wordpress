@@ -55,7 +55,7 @@ function insertabot_widget_token_endpoint( WP_REST_Request $request ) {
         // with site-specific secret (derived from AUTH_KEY or fallback) so it's
         // verifiable on the server side if needed.
         $random = wp_generate_password( 12, false, false );
-        if ( empty( $random ) ) {
+        if ( empty( $random ) || ! is_string( $random ) ) {
             return new WP_Error( 'token_generation_failed', 'Failed to generate random token', array( 'status' => 500 ) );
         }
 
@@ -68,6 +68,9 @@ function insertabot_widget_token_endpoint( WP_REST_Request $request ) {
         }
 
         $token = base64_encode( $payload . '|' . $sig );
+        if ( false === $token ) {
+            return new WP_Error( 'encoding_failed', 'Failed to encode token', array( 'status' => 500 ) );
+        }
 
         return rest_ensure_response(
             array(

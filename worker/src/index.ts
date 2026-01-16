@@ -788,15 +788,41 @@ export default {
         }
 
         if (url.pathname === "/dashboard" && request.method === "GET") {
-          const apiKeyParam = url.searchParams.get('key');
-          if (!apiKeyParam) {
-            throw new AuthenticationError(
-              ErrorCode.MISSING_API_KEY,
-              "API key required. Access dashboard via your signup confirmation or use ?key=YOUR_API_KEY"
-            );
+          let customer;
+
+          // Try session-based authentication first
+          const sessionId = getSessionIdFromRequest(request);
+          if (sessionId) {
+            const session = await getSession(env.DB, sessionId);
+            if (session) {
+              // Get customer by customer_id from session
+              const result = await env.DB.prepare('SELECT * FROM customers WHERE customer_id = ?')
+                .bind(session.customer_id)
+                .first();
+              customer = result as any;
+            }
           }
 
-          const customer = await getCustomerConfig(env.DB, apiKeyParam);
+          // Fallback to API key parameter (legacy support)
+          if (!customer) {
+            const apiKeyParam = url.searchParams.get('key');
+            if (apiKeyParam) {
+              customer = await getCustomerConfig(env.DB, apiKeyParam);
+            }
+          }
+
+          // If still no customer found, redirect to login
+          if (!customer) {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                'Location': '/login',
+                ...corsHeaders,
+                ...SECURITY_HEADERS,
+              },
+            });
+          }
+
           const widgetConfigData = await getWidgetConfig(env.DB, customer.customer_id);
 
           const html = getDashboardHTML(customer, widgetConfigData, url.origin);

@@ -4368,6 +4368,11 @@ function generateApiKey() {
   return "ib_sk_" + hex;
 }
 __name(generateApiKey, "generateApiKey");
+function escapeHtml(str) {
+  if (str == null) return "";
+  return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+}
+__name(escapeHtml, "escapeHtml");
 function extractTextFromMessage(content) {
   if (typeof content === "string") return content;
   return content.filter((part) => part.type === "text" && part.text).map((part) => part.text).join(" ");
@@ -4622,6 +4627,845 @@ async function updateWidgetConfig(db, customerId, config) {
 }
 __name(updateWidgetConfig, "updateWidgetConfig");
 
+// src/auth.ts
+async function hashPassword(password) {
+  const salt = crypto.randomUUID();
+  const saltBuffer = new TextEncoder().encode(salt);
+  const passwordBuffer = new TextEncoder().encode(password);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    passwordBuffer,
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  const hashBuffer = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: saltBuffer,
+      iterations: 1e5,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+    // 256 bits = 32 bytes
+  );
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return { hash, salt };
+}
+__name(hashPassword, "hashPassword");
+async function verifyPassword(password, storedHash, storedSalt) {
+  const saltBuffer = new TextEncoder().encode(storedSalt);
+  const passwordBuffer = new TextEncoder().encode(password);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    passwordBuffer,
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  const hashBuffer = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: saltBuffer,
+      iterations: 1e5,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    256
+  );
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return hash === storedHash;
+}
+__name(verifyPassword, "verifyPassword");
+function validatePasswordStrength(password) {
+  const errors = [];
+  if (password.length < 12) {
+    errors.push("Password must be at least 12 characters long");
+  }
+  if (!/[a-z]/.test(password)) {
+    errors.push("Password must contain at least one lowercase letter");
+  }
+  if (!/[A-Z]/.test(password)) {
+    errors.push("Password must contain at least one uppercase letter");
+  }
+  if (!/[0-9]/.test(password)) {
+    errors.push("Password must contain at least one number");
+  }
+  if (!/[^a-zA-Z0-9]/.test(password)) {
+    errors.push("Password must contain at least one special character");
+  }
+  const commonPasswords = ["password", "12345678", "qwerty", "admin", "letmein"];
+  if (commonPasswords.some((common) => password.toLowerCase().includes(common))) {
+    errors.push("Password contains common patterns");
+  }
+  return {
+    valid: errors.length === 0,
+    errors
+  };
+}
+__name(validatePasswordStrength, "validatePasswordStrength");
+function generateTOTPSecret() {
+  const buffer = new Uint8Array(20);
+  crypto.getRandomValues(buffer);
+  return base32Encode(buffer);
+}
+__name(generateTOTPSecret, "generateTOTPSecret");
+function base32Encode(buffer) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0;
+  let value = 0;
+  let output = "";
+  for (let i = 0; i < buffer.length; i++) {
+    value = value << 8 | buffer[i];
+    bits += 8;
+    while (bits >= 5) {
+      output += alphabet[value >>> bits - 5 & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    output += alphabet[value << 5 - bits & 31];
+  }
+  return output;
+}
+__name(base32Encode, "base32Encode");
+function base32Decode(input) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const cleanInput = input.toUpperCase().replace(/=+$/, "");
+  const output = [];
+  let bits = 0;
+  let value = 0;
+  for (let i = 0; i < cleanInput.length; i++) {
+    const idx = alphabet.indexOf(cleanInput[i]);
+    if (idx === -1) throw new Error("Invalid base32 character");
+    value = value << 5 | idx;
+    bits += 5;
+    if (bits >= 8) {
+      output.push(value >>> bits - 8 & 255);
+      bits -= 8;
+    }
+  }
+  return new Uint8Array(output);
+}
+__name(base32Decode, "base32Decode");
+async function verifyTOTPCode(secret, code, windowSize = 1) {
+  if (!secret || !code) return false;
+  if (code.length !== 6 || !/^\d{6}$/.test(code)) return false;
+  try {
+    for (let i = -windowSize; i <= windowSize; i++) {
+      const timeStep = 30;
+      const time = Math.floor(Date.now() / 1e3 / timeStep) + i;
+      const secretBytes = base32Decode(secret);
+      const timeBuffer = new ArrayBuffer(8);
+      const timeView = new DataView(timeBuffer);
+      timeView.setUint32(4, time, false);
+      const key = await crypto.subtle.importKey(
+        "raw",
+        secretBytes,
+        { name: "HMAC", hash: "SHA-1" },
+        false,
+        ["sign"]
+      );
+      const hmac = await crypto.subtle.sign("HMAC", key, timeBuffer);
+      const hmacArray = new Uint8Array(hmac);
+      const offset = hmacArray[hmacArray.length - 1] & 15;
+      const codeInt = (hmacArray[offset] & 127) << 24 | (hmacArray[offset + 1] & 255) << 16 | (hmacArray[offset + 2] & 255) << 8 | hmacArray[offset + 3] & 255;
+      const generatedCode = (codeInt % 1e6).toString().padStart(6, "0");
+      if (generatedCode === code) {
+        return true;
+      }
+    }
+    return false;
+  } catch (error) {
+    console.error("TOTP verification error:", error);
+    return false;
+  }
+}
+__name(verifyTOTPCode, "verifyTOTPCode");
+function generateTOTPUri(secret, email, issuer = "Insertabot") {
+  const encodedIssuer = encodeURIComponent(issuer);
+  const encodedEmail = encodeURIComponent(email);
+  return `otpauth://totp/${encodedIssuer}:${encodedEmail}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
+}
+__name(generateTOTPUri, "generateTOTPUri");
+async function generateBackupCodes(count = 8) {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const buffer = new Uint8Array(4);
+    crypto.getRandomValues(buffer);
+    const code = Array.from(buffer).map((byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase().substring(0, 8);
+    codes.push(code);
+  }
+  return codes;
+}
+__name(generateBackupCodes, "generateBackupCodes");
+async function hashBackupCodes(codes) {
+  const hashed = [];
+  for (const code of codes) {
+    const buffer = new TextEncoder().encode(code);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+    hashed.push(hash);
+  }
+  return hashed;
+}
+__name(hashBackupCodes, "hashBackupCodes");
+async function verifyBackupCode(code, storedHashes) {
+  const buffer = new TextEncoder().encode(code);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  return storedHashes.includes(hash);
+}
+__name(verifyBackupCode, "verifyBackupCode");
+function generateSessionId() {
+  return crypto.randomUUID() + "-" + Date.now().toString(36);
+}
+__name(generateSessionId, "generateSessionId");
+function generateResetToken() {
+  const buffer = new Uint8Array(32);
+  crypto.getRandomValues(buffer);
+  return Array.from(buffer).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+__name(generateResetToken, "generateResetToken");
+function checkLoginAttempts(failedAttempts, accountLockedUntil) {
+  const now = Date.now() / 1e3;
+  if (accountLockedUntil && accountLockedUntil > now) {
+    return {
+      allowed: false,
+      lockedUntil: new Date(accountLockedUntil * 1e3)
+    };
+  }
+  const maxAttempts = 5;
+  if (failedAttempts >= maxAttempts) {
+    return {
+      allowed: false,
+      lockedUntil: new Date((now + 900) * 1e3)
+      // Lock for 15 minutes
+    };
+  }
+  return {
+    allowed: true,
+    attemptsRemaining: maxAttempts - failedAttempts
+  };
+}
+__name(checkLoginAttempts, "checkLoginAttempts");
+function calculateLockTime(failedAttempts) {
+  const now = Math.floor(Date.now() / 1e3);
+  if (failedAttempts >= 5) {
+    return now + 900;
+  }
+  return 0;
+}
+__name(calculateLockTime, "calculateLockTime");
+
+// src/session.ts
+async function createSession(db, customerId, ipAddress, userAgent, expiryHours = 24) {
+  return withDatabase(async () => {
+    const sessionId = generateSessionId();
+    const now = Math.floor(Date.now() / 1e3);
+    const expiresAt = now + expiryHours * 3600;
+    await db.prepare(
+      `INSERT INTO sessions (session_id, customer_id, created_at, expires_at, last_accessed_at, ip_address, user_agent, is_valid)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+    ).bind(sessionId, customerId, now, expiresAt, now, ipAddress, userAgent).run();
+    return {
+      session_id: sessionId,
+      customer_id: customerId,
+      created_at: now,
+      expires_at: expiresAt,
+      last_accessed_at: now,
+      ip_address: ipAddress,
+      user_agent: userAgent,
+      is_valid: 1
+    };
+  }, "createSession");
+}
+__name(createSession, "createSession");
+async function getSession(db, sessionId) {
+  return withDatabase(async () => {
+    const session = await db.prepare(
+      `SELECT * FROM sessions
+				 WHERE session_id = ? AND is_valid = 1`
+    ).bind(sessionId).first();
+    if (!session) {
+      return null;
+    }
+    const now = Math.floor(Date.now() / 1e3);
+    if (session.expires_at < now) {
+      await invalidateSession(db, sessionId);
+      return null;
+    }
+    await db.prepare(`UPDATE sessions SET last_accessed_at = ? WHERE session_id = ?`).bind(now, sessionId).run();
+    return session;
+  }, "getSession");
+}
+__name(getSession, "getSession");
+async function invalidateSession(db, sessionId) {
+  return withDatabase(async () => {
+    await db.prepare(`UPDATE sessions SET is_valid = 0 WHERE session_id = ?`).bind(sessionId).run();
+  }, "invalidateSession");
+}
+__name(invalidateSession, "invalidateSession");
+async function invalidateAllCustomerSessions(db, customerId) {
+  return withDatabase(async () => {
+    await db.prepare(`UPDATE sessions SET is_valid = 0 WHERE customer_id = ?`).bind(customerId).run();
+  }, "invalidateAllCustomerSessions");
+}
+__name(invalidateAllCustomerSessions, "invalidateAllCustomerSessions");
+function getSessionIdFromRequest(request) {
+  const authHeader = request.headers.get("Authorization");
+  if (authHeader?.startsWith("Session ")) {
+    return authHeader.slice(8);
+  }
+  const cookieHeader = request.headers.get("Cookie");
+  if (!cookieHeader) return null;
+  const cookies = cookieHeader.split(";").map((c) => c.trim());
+  for (const cookie of cookies) {
+    const [name, value] = cookie.split("=");
+    if (name === "session_id") {
+      return value;
+    }
+  }
+  return null;
+}
+__name(getSessionIdFromRequest, "getSessionIdFromRequest");
+function createSessionCookie(sessionId, expiryHours = 24, secure = true) {
+  const maxAge = expiryHours * 3600;
+  const secureFlag = secure ? "Secure; " : "";
+  return `session_id=${sessionId}; HttpOnly; ${secureFlag}SameSite=Strict; Max-Age=${maxAge}; Path=/`;
+}
+__name(createSessionCookie, "createSessionCookie");
+function createSessionDeletionCookie() {
+  return "session_id=; HttpOnly; Secure; SameSite=Strict; Max-Age=0; Path=/";
+}
+__name(createSessionDeletionCookie, "createSessionDeletionCookie");
+
+// src/security-audit.ts
+async function logSecurityEvent(db, event) {
+  return withDatabase(async () => {
+    const timestamp = Math.floor(Date.now() / 1e3);
+    const metadata = event.metadata ? JSON.stringify(event.metadata) : null;
+    await db.prepare(
+      `INSERT INTO security_audit_log (customer_id, event_type, timestamp, ip_address, user_agent, metadata)
+				 VALUES (?, ?, ?, ?, ?, ?)`
+    ).bind(
+      event.customer_id,
+      event.event_type,
+      timestamp,
+      event.ip_address || null,
+      event.user_agent || null,
+      metadata
+    ).run();
+  }, "logSecurityEvent");
+}
+__name(logSecurityEvent, "logSecurityEvent");
+
+// src/auth-endpoints.ts
+async function handleSetPassword(db, request, ipAddress, userAgent) {
+  const validation = validatePasswordStrength(request.password);
+  if (!validation.valid) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      `Password requirements not met: ${validation.errors.join(", ")}`,
+      400
+    );
+  }
+  const customer = await withDatabase(
+    async () => db.prepare(
+      "SELECT customer_id, password_hash FROM customers WHERE email = ?"
+    ).bind(request.email).first(),
+    "getCustomerForPasswordSet"
+  );
+  if (!customer) {
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Account not found"
+    );
+  }
+  if (customer.password_hash) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      "Password already set. Use password change endpoint.",
+      400
+    );
+  }
+  const { hash, salt } = await hashPassword(request.password);
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET password_hash = ?, password_salt = ?, updated_at = ? WHERE customer_id = ?"
+    ).bind(hash, salt, Math.floor(Date.now() / 1e3), customer.customer_id).run(),
+    "setPassword"
+  );
+  await logSecurityEvent(db, {
+    customer_id: customer.customer_id,
+    event_type: "password_created",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0
+  });
+  return {
+    success: true,
+    message: "Password set successfully"
+  };
+}
+__name(handleSetPassword, "handleSetPassword");
+async function handleLogin(db, request, ipAddress, userAgent) {
+  const customer = await withDatabase(
+    async () => db.prepare(
+      `SELECT customer_id, email, password_hash, password_salt, totp_enabled, totp_secret,
+				        backup_codes, failed_login_attempts, account_locked_until
+				 FROM customers WHERE email = ? AND status = 'active'`
+    ).bind(request.email).first(),
+    "getCustomerForLogin"
+  );
+  if (!customer) {
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Invalid email or password"
+    );
+  }
+  const lockCheck = checkLoginAttempts(
+    customer.failed_login_attempts,
+    customer.account_locked_until
+  );
+  if (!lockCheck.allowed) {
+    await logSecurityEvent(db, {
+      customer_id: customer.customer_id,
+      event_type: "login_locked",
+      ip_address: ipAddress || void 0,
+      user_agent: userAgent || void 0,
+      metadata: { locked_until: lockCheck.lockedUntil?.toISOString() }
+    });
+    throw new AppError(
+      "RATE_LIMIT_EXCEEDED" /* RATE_LIMIT_EXCEEDED */,
+      `Account temporarily locked. Try again after ${lockCheck.lockedUntil?.toLocaleString()}`,
+      429
+    );
+  }
+  if (!customer.password_hash || !customer.password_salt) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      "Please set a password for your account first",
+      400
+    );
+  }
+  const passwordValid = await verifyPassword(
+    request.password,
+    customer.password_hash,
+    customer.password_salt
+  );
+  if (!passwordValid) {
+    const newFailedAttempts = customer.failed_login_attempts + 1;
+    const lockTime = calculateLockTime(newFailedAttempts);
+    await withDatabase(
+      async () => db.prepare(
+        "UPDATE customers SET failed_login_attempts = ?, account_locked_until = ?, updated_at = ? WHERE customer_id = ?"
+      ).bind(
+        newFailedAttempts,
+        lockTime || null,
+        Math.floor(Date.now() / 1e3),
+        customer.customer_id
+      ).run(),
+      "incrementFailedAttempts"
+    );
+    await logSecurityEvent(db, {
+      customer_id: customer.customer_id,
+      event_type: "login_failed",
+      ip_address: ipAddress || void 0,
+      user_agent: userAgent || void 0,
+      metadata: { reason: "invalid_password", attempts: newFailedAttempts }
+    });
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Invalid email or password"
+    );
+  }
+  if (customer.totp_enabled === 1) {
+    let twoFactorValid = false;
+    if (request.totp_code && customer.totp_secret) {
+      twoFactorValid = await verifyTOTPCode(
+        customer.totp_secret,
+        request.totp_code
+      );
+      if (twoFactorValid) {
+        await logSecurityEvent(db, {
+          customer_id: customer.customer_id,
+          event_type: "2fa_verified",
+          ip_address: ipAddress || void 0,
+          user_agent: userAgent || void 0
+        });
+      }
+    }
+    if (!twoFactorValid && request.backup_code && customer.backup_codes) {
+      const backupCodeHashes = JSON.parse(customer.backup_codes);
+      twoFactorValid = await verifyBackupCode(
+        request.backup_code,
+        backupCodeHashes
+      );
+      if (twoFactorValid) {
+        const buffer = new TextEncoder().encode(request.backup_code);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const usedHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+        const remainingCodes = backupCodeHashes.filter(
+          (h) => h !== usedHash
+        );
+        await withDatabase(
+          async () => db.prepare(
+            "UPDATE customers SET backup_codes = ?, updated_at = ? WHERE customer_id = ?"
+          ).bind(
+            JSON.stringify(remainingCodes),
+            Math.floor(Date.now() / 1e3),
+            customer.customer_id
+          ).run(),
+          "removeUsedBackupCode"
+        );
+        await logSecurityEvent(db, {
+          customer_id: customer.customer_id,
+          event_type: "backup_code_used",
+          ip_address: ipAddress || void 0,
+          user_agent: userAgent || void 0,
+          metadata: { remaining_codes: remainingCodes.length }
+        });
+      }
+    }
+    if (!twoFactorValid) {
+      if (!request.totp_code && !request.backup_code) {
+        return {
+          response: {
+            success: false,
+            requires_2fa: true,
+            message: "Please provide your 2FA code"
+          }
+        };
+      } else {
+        await logSecurityEvent(db, {
+          customer_id: customer.customer_id,
+          event_type: "2fa_failed",
+          ip_address: ipAddress || void 0,
+          user_agent: userAgent || void 0
+        });
+        throw new AuthenticationError(
+          "INVALID_API_KEY" /* INVALID_API_KEY */,
+          "Invalid 2FA code"
+        );
+      }
+    }
+  }
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET failed_login_attempts = 0, account_locked_until = NULL, last_login_at = ?, updated_at = ? WHERE customer_id = ?"
+    ).bind(
+      Math.floor(Date.now() / 1e3),
+      Math.floor(Date.now() / 1e3),
+      customer.customer_id
+    ).run(),
+    "resetFailedAttempts"
+  );
+  const session = await createSession(
+    db,
+    customer.customer_id,
+    ipAddress,
+    userAgent,
+    24
+  );
+  await logSecurityEvent(db, {
+    customer_id: customer.customer_id,
+    event_type: "login_success",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0
+  });
+  await logSecurityEvent(db, {
+    customer_id: customer.customer_id,
+    event_type: "session_created",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0,
+    metadata: { session_id: session.session_id }
+  });
+  return {
+    response: {
+      success: true,
+      session_id: session.session_id,
+      message: "Login successful"
+    },
+    sessionCookie: createSessionCookie(session.session_id, 24, true)
+  };
+}
+__name(handleLogin, "handleLogin");
+async function handleLogout(db, sessionId, ipAddress) {
+  const session = await getSession(db, sessionId);
+  if (session) {
+    await invalidateSession(db, sessionId);
+    await logSecurityEvent(db, {
+      customer_id: session.customer_id,
+      event_type: "session_invalidated",
+      ip_address: ipAddress || void 0,
+      metadata: { reason: "logout" }
+    });
+  }
+  return {
+    success: true,
+    cookie: createSessionDeletionCookie()
+  };
+}
+__name(handleLogout, "handleLogout");
+async function handleChangePassword(db, customerId, request, ipAddress, userAgent) {
+  const validation = validatePasswordStrength(request.new_password);
+  if (!validation.valid) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      `Password requirements not met: ${validation.errors.join(", ")}`,
+      400
+    );
+  }
+  const customer = await withDatabase(
+    async () => db.prepare(
+      "SELECT password_hash, password_salt FROM customers WHERE customer_id = ?"
+    ).bind(customerId).first(),
+    "getPasswordForChange"
+  );
+  if (!customer) {
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Customer not found"
+    );
+  }
+  const currentPasswordValid = await verifyPassword(
+    request.current_password,
+    customer.password_hash,
+    customer.password_salt
+  );
+  if (!currentPasswordValid) {
+    await logSecurityEvent(db, {
+      customer_id: customerId,
+      event_type: "password_changed",
+      ip_address: ipAddress || void 0,
+      user_agent: userAgent || void 0,
+      metadata: { success: false, reason: "invalid_current_password" }
+    });
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Current password is incorrect"
+    );
+  }
+  const { hash, salt } = await hashPassword(request.new_password);
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET password_hash = ?, password_salt = ?, updated_at = ? WHERE customer_id = ?"
+    ).bind(hash, salt, Math.floor(Date.now() / 1e3), customerId).run(),
+    "changePassword"
+  );
+  await invalidateAllCustomerSessions(db, customerId);
+  await logSecurityEvent(db, {
+    customer_id: customerId,
+    event_type: "password_changed",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0,
+    metadata: { success: true }
+  });
+  return {
+    success: true,
+    message: "Password changed successfully. Please log in again."
+  };
+}
+__name(handleChangePassword, "handleChangePassword");
+async function handleEnable2FA(db, customerId, email, ipAddress, userAgent) {
+  const secret = generateTOTPSecret();
+  const qrUri = generateTOTPUri(secret, email, "Insertabot");
+  const backupCodes = await generateBackupCodes(8);
+  const hashedBackupCodes = await hashBackupCodes(backupCodes);
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET totp_secret = ?, backup_codes = ?, updated_at = ? WHERE customer_id = ?"
+    ).bind(
+      secret,
+      JSON.stringify(hashedBackupCodes),
+      Math.floor(Date.now() / 1e3),
+      customerId
+    ).run(),
+    "store2FASecret"
+  );
+  return {
+    success: true,
+    secret,
+    qr_uri: qrUri,
+    backup_codes: backupCodes
+  };
+}
+__name(handleEnable2FA, "handleEnable2FA");
+async function handleVerify2FA(db, customerId, request, ipAddress, userAgent) {
+  const customer = await withDatabase(
+    async () => db.prepare(
+      "SELECT totp_secret, totp_enabled FROM customers WHERE customer_id = ?"
+    ).bind(customerId).first(),
+    "get2FASecret"
+  );
+  if (!customer || !customer.totp_secret) {
+    throw new AppError("INVALID_REQUEST" /* INVALID_REQUEST */, "2FA not initialized", 400);
+  }
+  const valid = await verifyTOTPCode(customer.totp_secret, request.totp_code);
+  if (!valid) {
+    await logSecurityEvent(db, {
+      customer_id: customerId,
+      event_type: "2fa_failed",
+      ip_address: ipAddress || void 0,
+      user_agent: userAgent || void 0,
+      metadata: { context: "enrollment_verification" }
+    });
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Invalid 2FA code"
+    );
+  }
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET totp_enabled = 1, updated_at = ? WHERE customer_id = ?"
+    ).bind(Math.floor(Date.now() / 1e3), customerId).run(),
+    "enable2FA"
+  );
+  await logSecurityEvent(db, {
+    customer_id: customerId,
+    event_type: "2fa_enabled",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0
+  });
+  return {
+    success: true,
+    message: "2FA enabled successfully"
+  };
+}
+__name(handleVerify2FA, "handleVerify2FA");
+async function handleDisable2FA(db, customerId, password, ipAddress, userAgent) {
+  const customer = await withDatabase(
+    async () => db.prepare(
+      "SELECT password_hash, password_salt FROM customers WHERE customer_id = ?"
+    ).bind(customerId).first(),
+    "getPasswordForDisable2FA"
+  );
+  if (!customer) {
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Customer not found"
+    );
+  }
+  const passwordValid = await verifyPassword(
+    password,
+    customer.password_hash,
+    customer.password_salt
+  );
+  if (!passwordValid) {
+    throw new AuthenticationError(
+      "INVALID_API_KEY" /* INVALID_API_KEY */,
+      "Invalid password"
+    );
+  }
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET totp_enabled = 0, totp_secret = NULL, backup_codes = NULL, updated_at = ? WHERE customer_id = ?"
+    ).bind(Math.floor(Date.now() / 1e3), customerId).run(),
+    "disable2FA"
+  );
+  await logSecurityEvent(db, {
+    customer_id: customerId,
+    event_type: "2fa_disabled",
+    ip_address: ipAddress || void 0,
+    user_agent: userAgent || void 0
+  });
+  return {
+    success: true,
+    message: "2FA disabled successfully"
+  };
+}
+__name(handleDisable2FA, "handleDisable2FA");
+async function handlePasswordResetRequest(db, email, ipAddress) {
+  const customer = await withDatabase(
+    async () => db.prepare("SELECT customer_id FROM customers WHERE email = ?").bind(email).first(),
+    "getCustomerForReset"
+  );
+  if (!customer) {
+    return {
+      success: true,
+      message: "If an account exists with this email, a password reset link has been sent."
+    };
+  }
+  const resetToken = generateResetToken();
+  const expiresAt = Math.floor(Date.now() / 1e3) + 3600;
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET password_reset_token = ?, password_reset_expires = ?, updated_at = ? WHERE customer_id = ?"
+    ).bind(
+      resetToken,
+      expiresAt,
+      Math.floor(Date.now() / 1e3),
+      customer.customer_id
+    ).run(),
+    "setResetToken"
+  );
+  await logSecurityEvent(db, {
+    customer_id: customer.customer_id,
+    event_type: "password_reset_requested",
+    ip_address: ipAddress || void 0
+  });
+  return {
+    success: true,
+    message: "If an account exists with this email, a password reset link has been sent."
+  };
+}
+__name(handlePasswordResetRequest, "handlePasswordResetRequest");
+async function handlePasswordReset(db, request, ipAddress) {
+  const validation = validatePasswordStrength(request.new_password);
+  if (!validation.valid) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      `Password requirements not met: ${validation.errors.join(", ")}`,
+      400
+    );
+  }
+  const customer = await withDatabase(
+    async () => db.prepare(
+      "SELECT customer_id, password_reset_expires FROM customers WHERE password_reset_token = ?"
+    ).bind(request.token).first(),
+    "getCustomerByResetToken"
+  );
+  if (!customer) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      "Invalid or expired reset token",
+      400
+    );
+  }
+  const now = Math.floor(Date.now() / 1e3);
+  if (customer.password_reset_expires < now) {
+    throw new AppError(
+      "INVALID_REQUEST" /* INVALID_REQUEST */,
+      "Reset token has expired",
+      400
+    );
+  }
+  const { hash, salt } = await hashPassword(request.new_password);
+  await withDatabase(
+    async () => db.prepare(
+      "UPDATE customers SET password_hash = ?, password_salt = ?, password_reset_token = NULL, password_reset_expires = NULL, failed_login_attempts = 0, account_locked_until = NULL, updated_at = ? WHERE customer_id = ?"
+    ).bind(hash, salt, now, customer.customer_id).run(),
+    "resetPassword"
+  );
+  await invalidateAllCustomerSessions(db, customer.customer_id);
+  await logSecurityEvent(db, {
+    customer_id: customer.customer_id,
+    event_type: "password_reset_completed",
+    ip_address: ipAddress || void 0
+  });
+  return {
+    success: true,
+    message: "Password reset successfully. Please log in with your new password."
+  };
+}
+__name(handlePasswordReset, "handlePasswordReset");
+
 // src/playground.ts
 function getPlaygroundHTML(origin) {
   return `<!DOCTYPE html>
@@ -4665,6 +5509,15 @@ function getPlaygroundHTML(origin) {
             display: flex;
             align-items: center;
             gap: 16px;
+        }
+
+        .mascot-image {
+            width: 60px;
+            height: 60px;
+            border-radius: 12px;
+            object-fit: cover;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            border: 2px solid rgba(255,255,255,0.3);
         }
 
         .header-title h1 {
@@ -4886,6 +5739,7 @@ function getPlaygroundHTML(origin) {
     <div class="playground-container">
         <div class="playground-header">
             <div class="header-info">
+                <img src="${origin}/insertabot-mascot.png" alt="Insertabot Mascot" class="mascot-image" />
                 <div class="header-title">
                     <h1>Insertabot Playground</h1>
                     <p>Chat with AI, test unlimited ideas</p>
@@ -4918,7 +5772,7 @@ function getPlaygroundHTML(origin) {
     <script>
         const API_ENDPOINT = '${origin}/v1/chat/completions';
         // Demo API key - automatically configured for the playground
-        const API_KEY = 'ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f';
+        const API_KEY = 'ib_sk_demo_62132eda22a524d715034a7013a7b20e2a36f93b71b588d3354d74e4024e9ed7';
         const QUOTA_MAX = 50;
         const STORAGE_KEY = 'playground_quota';
 
@@ -5295,9 +6149,9 @@ function getDashboardHTML(customer, widgetConfig, origin) {
         <div class="header">
             <div>
                 <h1>Dashboard</h1>
-                <p style="color: #94a3b8; margin-top: 4px;">${customer.company_name}</p>
+                <p style="color: #94a3b8; margin-top: 4px;">${escapeHtml(customer.company_name)}</p>
             </div>
-            <div class="plan-badge">${customer.plan_type} Plan</div>
+            <div class="plan-badge">${escapeHtml(customer.plan_type)} Plan</div>
         </div>
 
         <div id="success-msg" class="success">Settings saved successfully!</div>
@@ -5306,14 +6160,14 @@ function getDashboardHTML(customer, widgetConfig, origin) {
             <div class="card">
                 <h2>\u{1F511} API Key</h2>
                 <div class="code-box">
-                    ${customer.api_key}
-                    <button class="copy-btn" onclick="copy('${customer.api_key}')">Copy</button>
+                    ${escapeHtml(customer.api_key)}
+                    <button class="copy-btn" onclick="copy('${escapeHtml(customer.api_key)}')">Copy</button>
                 </div>
             </div>
 
             <div class="card">
                 <h2>\u{1F4CA} Usage</h2>
-                <div class="stat">${customer.rate_limit_per_day}</div>
+                <div class="stat">${escapeHtml(String(customer.rate_limit_per_day))}</div>
                 <div class="stat-label">Messages per day</div>
             </div>
         </div>
@@ -5334,23 +6188,23 @@ function getDashboardHTML(customer, widgetConfig, origin) {
             <form id="config-form">
                 <div class="form-group">
                     <label>Bot Name</label>
-                    <input type="text" name="bot_name" value="${widgetConfig.bot_name}" />
+                    <input type="text" name="bot_name" value="${escapeHtml(widgetConfig.bot_name)}" />
                 </div>
                 <div class="form-group">
                     <label>Bot Avatar URL (optional)</label>
-                    <input type="url" name="bot_avatar_url" value="${widgetConfig.bot_avatar_url || ""}" placeholder="https://example.com/logo.png" />
+                    <input type="url" name="bot_avatar_url" value="${escapeHtml(widgetConfig.bot_avatar_url || "")}" placeholder="https://example.com/logo.png" />
                 </div>
                 <div class="form-group">
                     <label>Primary Color</label>
-                    <input type="color" name="primary_color" value="${widgetConfig.primary_color}" />
+                    <input type="color" name="primary_color" value="${escapeHtml(widgetConfig.primary_color)}" />
                 </div>
                 <div class="form-group">
                     <label>Greeting Message</label>
-                    <input type="text" name="greeting_message" value="${widgetConfig.greeting_message}" />
+                    <input type="text" name="greeting_message" value="${escapeHtml(widgetConfig.greeting_message)}" />
                 </div>
                 <div class="form-group">
                     <label>System Prompt</label>
-                    <textarea name="system_prompt" rows="4">${widgetConfig.system_prompt}</textarea>
+                    <textarea name="system_prompt" rows="4">${escapeHtml(widgetConfig.system_prompt)}</textarea>
                 </div>
                 <button type="submit" class="btn">Save Changes</button>
             </form>
@@ -5359,8 +6213,12 @@ function getDashboardHTML(customer, widgetConfig, origin) {
 
     <script>
         function copy(text) {
-            navigator.clipboard.writeText(text);
-            alert('Copied to clipboard!');
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            }).catch((err) => {
+                console.error('Copy failed:', err);
+                alert('Failed to copy to clipboard');
+            });
         }
 
         document.getElementById('config-form').addEventListener('submit', async (e) => {
@@ -5368,20 +6226,27 @@ function getDashboardHTML(customer, widgetConfig, origin) {
             const formData = new FormData(e.target);
             const data = Object.fromEntries(formData);
 
-            const response = await fetch('/api/customer/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-API-Key': '${customer.api_key}'
-                },
-                body: JSON.stringify(data)
-            });
+            try {
+                const response = await fetch('/api/customer/config', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': '${escapeHtml(customer.api_key)}'
+                    },
+                    body: JSON.stringify(data)
+                });
 
-            if (response.ok) {
-                document.getElementById('success-msg').style.display = 'block';
-                setTimeout(() => {
-                    document.getElementById('success-msg').style.display = 'none';
-                }, 3000);
+                if (response.ok) {
+                    document.getElementById('success-msg').style.display = 'block';
+                    setTimeout(() => {
+                        document.getElementById('success-msg').style.display = 'none';
+                    }, 3000);
+                } else {
+                    throw new Error('Failed to save settings');
+                }
+            } catch (err) {
+                console.error('Save failed:', err);
+                alert('Failed to save settings. Please try again.');
             }
         });
     <\/script>
@@ -5554,6 +6419,38 @@ function getSignupHTML() {
         .back-link a:hover {
             text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
         }
+        .password-strength {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #94a3b8;
+        }
+        .strength-bar {
+            height: 4px;
+            background: rgba(0, 245, 255, 0.1);
+            border-radius: 2px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+        .strength-fill {
+            height: 100%;
+            width: 0%;
+            transition: all 0.3s;
+            border-radius: 2px;
+        }
+        .strength-weak { width: 33%; background: #ff0055; }
+        .strength-medium { width: 66%; background: #ffa500; }
+        .strength-strong { width: 100%; background: #00ff88; }
+        .password-requirements {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #64748b;
+        }
+        .requirement {
+            margin: 2px 0;
+        }
+        .requirement.met {
+            color: #00ff88;
+        }
     </style>
 </head>
 <body>
@@ -5574,6 +6471,23 @@ function getSignupHTML() {
                 <label>Company Name</label>
                 <input type="text" name="company_name" required placeholder="Your Company" />
             </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" id="password" required placeholder="Create a secure password" />
+                <div class="password-strength">
+                    <div class="strength-bar">
+                        <div class="strength-fill" id="strength-fill"></div>
+                    </div>
+                    <span id="strength-text">Password strength</span>
+                </div>
+                <div class="password-requirements">
+                    <div class="requirement" id="req-length">\u2022 At least 12 characters</div>
+                    <div class="requirement" id="req-upper">\u2022 One uppercase letter</div>
+                    <div class="requirement" id="req-lower">\u2022 One lowercase letter</div>
+                    <div class="requirement" id="req-number">\u2022 One number</div>
+                    <div class="requirement" id="req-special">\u2022 One special character</div>
+                </div>
+            </div>
             <button type="submit" class="btn" id="submit-btn">Create Free Account</button>
         </form>
 
@@ -5590,12 +6504,50 @@ function getSignupHTML() {
     </div>
 
     <script>
+        // Password strength checker
+        const passwordInput = document.getElementById('password');
+        const strengthFill = document.getElementById('strength-fill');
+        const strengthText = document.getElementById('strength-text');
+
+        passwordInput.addEventListener('input', (e) => {
+            const password = e.target.value;
+            const checks = {
+                length: password.length >= 12,
+                upper: /[A-Z]/.test(password),
+                lower: /[a-z]/.test(password),
+                number: /[0-9]/.test(password),
+                special: /[^a-zA-Z0-9]/.test(password)
+            };
+
+            // Update requirement indicators
+            document.getElementById('req-length').classList.toggle('met', checks.length);
+            document.getElementById('req-upper').classList.toggle('met', checks.upper);
+            document.getElementById('req-lower').classList.toggle('met', checks.lower);
+            document.getElementById('req-number').classList.toggle('met', checks.number);
+            document.getElementById('req-special').classList.toggle('met', checks.special);
+
+            // Calculate strength
+            const metCount = Object.values(checks).filter(v => v).length;
+            strengthFill.className = 'strength-fill';
+
+            if (metCount <= 2) {
+                strengthFill.classList.add('strength-weak');
+                strengthText.textContent = 'Weak password';
+            } else if (metCount <= 4) {
+                strengthFill.classList.add('strength-medium');
+                strengthText.textContent = 'Medium password';
+            } else {
+                strengthFill.classList.add('strength-strong');
+                strengthText.textContent = 'Strong password';
+            }
+        });
+
         document.getElementById('signup-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            
+
             const btn = document.getElementById('submit-btn');
             const errorMsg = document.getElementById('error-msg');
-            
+
             btn.disabled = true;
             btn.textContent = 'Creating account...';
             errorMsg.style.display = 'none';
@@ -5604,6 +6556,7 @@ function getSignupHTML() {
             const data = Object.fromEntries(formData);
 
             try {
+                // Create account
                 const response = await fetch('/api/customer/create', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -5613,10 +6566,40 @@ function getSignupHTML() {
                 const result = await response.json();
 
                 if (response.ok) {
-                    // amazonq-ignore-next-line
-                    window.location.href = '/dashboard?key=' + result.api_key;
+                    // Set password for the account
+                    const setPasswordResponse = await fetch('/api/auth/set-password', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: data.email,
+                            password: data.password
+                        })
+                    });
+
+                    if (setPasswordResponse.ok) {
+                        // Auto-login after signup
+                        const loginResponse = await fetch('/api/customer/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                email: data.email,
+                                password: data.password
+                            })
+                        });
+
+                        const loginResult = await loginResponse.json();
+                        if (loginResult.success && loginResult.session_id) {
+                            window.location.href = '/dashboard';
+                        } else {
+                            // Fallback to API key access
+                            window.location.href = '/dashboard?key=' + result.api_key;
+                        }
+                    } else {
+                        // If password set fails, still redirect but show message
+                        window.location.href = '/dashboard?key=' + result.api_key;
+                    }
                 } else {
-                    errorMsg.textContent = result.error || 'Failed to create account';
+                    errorMsg.textContent = result.error || result.message || 'Failed to create account';
                     errorMsg.style.display = 'block';
                     btn.disabled = false;
                     btn.textContent = 'Create Free Account';
@@ -5633,6 +6616,648 @@ function getSignupHTML() {
 </html>`;
 }
 __name(getSignupHTML, "getSignupHTML");
+
+// src/html/login.ts
+function getLoginHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Insertabot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(0, 245, 255, 0.03), transparent 50%);
+            pointer-events: none;
+        }
+        .login-container {
+            background: rgba(10, 10, 10, 0.9);
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 0 40px rgba(0, 245, 255, 0.15);
+            position: relative;
+            z-index: 1;
+        }
+        .login-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00f5ff, #ff00ff, #00f5ff, transparent);
+            border-radius: 20px 20px 0 0;
+        }
+        h1 {
+            font-size: 36px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle { color: #94a3b8; margin-bottom: 32px; font-size: 14px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #94a3b8; }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: #000000;
+            border: 1px solid rgba(0, 245, 255, 0.2);
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #00f5ff;
+            box-shadow: 0 0 15px rgba(0, 245, 255, 0.2);
+        }
+        .btn {
+            width: 100%;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 8px;
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            box-shadow: 0 0 30px rgba(0, 245, 255, 0.5);
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .error {
+            background: linear-gradient(135deg, #ff0055, #ff00ff);
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            box-shadow: 0 0 15px rgba(255, 0, 85, 0.3);
+        }
+        .success {
+            background: linear-gradient(135deg, #00ff88, #00f5ff);
+            color: #000;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+            font-weight: 600;
+        }
+        .help-text {
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid rgba(0, 245, 255, 0.2);
+            color: #94a3b8;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 24px;
+        }
+        .back-link a {
+            color: #00f5ff;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .back-link a:hover {
+            text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Access Dashboard</h1>
+        <p class="subtitle">Enter your email to access your chatbot dashboard</p>
+
+        <div id="error-msg" class="error"></div>
+        <div id="success-msg" class="success"></div>
+
+        <form id="login-form">
+            <div class="form-group">
+                <label>Email Address</label>
+                <input type="email" name="email" id="email" required placeholder="you@company.com" autofocus />
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" id="password" required placeholder="Enter your password" />
+            </div>
+            <div class="form-group" id="2fa-group" style="display: none;">
+                <label>2FA Code (6 digits)</label>
+                <input type="text" name="totp_code" id="totp_code" placeholder="000000" maxlength="6" pattern="[0-9]{6}" />
+                <div style="margin-top: 8px; font-size: 12px; color: #64748b;">
+                    Or use a <a href="#" id="use-backup-code" style="color: #00f5ff;">backup code</a>
+                </div>
+            </div>
+            <div class="form-group" id="backup-group" style="display: none;">
+                <label>Backup Code</label>
+                <input type="text" name="backup_code" id="backup_code" placeholder="Enter backup code" />
+                <div style="margin-top: 8px; font-size: 12px; color: #64748b;">
+                    Or use your <a href="#" id="use-2fa-code" style="color: #00f5ff;">2FA code</a>
+                </div>
+            </div>
+            <button type="submit" class="btn" id="submit-btn">Log In</button>
+        </form>
+
+        <div style="margin-top: 16px; text-align: center;">
+            <a href="/reset-password" style="color: #00f5ff; font-size: 14px; text-decoration: none;">Forgot password?</a>
+        </div>
+
+        <div class="help-text">
+            <strong>Don't have an account?</strong><br>
+            <a href="/signup" style="color: #00f5ff;">Sign up for free</a> to get started with Insertabot.
+        </div>
+
+        <div class="back-link">
+            <a href="/">\u2190 Back to home</a>
+        </div>
+    </div>
+
+    <script>
+        // Toggle between 2FA code and backup code
+        document.getElementById('use-backup-code')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('2fa-group').style.display = 'none';
+            document.getElementById('backup-group').style.display = 'block';
+            document.getElementById('totp_code').value = '';
+            document.getElementById('backup_code').focus();
+        });
+
+        document.getElementById('use-2fa-code')?.addEventListener('click', (e) => {
+            e.preventDefault();
+            document.getElementById('backup-group').style.display = 'none';
+            document.getElementById('2fa-group').style.display = 'block';
+            document.getElementById('backup_code').value = '';
+            document.getElementById('totp_code').focus();
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const btn = document.getElementById('submit-btn');
+            const errorMsg = document.getElementById('error-msg');
+            const successMsg = document.getElementById('success-msg');
+
+            btn.disabled = true;
+            btn.textContent = 'Logging in...';
+            errorMsg.style.display = 'none';
+            successMsg.style.display = 'none';
+
+            const formData = new FormData(e.target);
+            const data = {
+                email: formData.get('email'),
+                password: formData.get('password'),
+                totp_code: formData.get('totp_code') || undefined,
+                backup_code: formData.get('backup_code') || undefined
+            };
+
+            try {
+                const response = await fetch('/api/customer/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.session_id) {
+                    // Successful login with session
+                    successMsg.textContent = 'Login successful! Redirecting...';
+                    successMsg.style.display = 'block';
+
+                    setTimeout(() => {
+                        window.location.href = '/dashboard';
+                    }, 500);
+                } else if (result.requires_2fa) {
+                    // 2FA required - show 2FA input
+                    document.getElementById('2fa-group').style.display = 'block';
+                    document.getElementById('totp_code').required = true;
+                    document.getElementById('totp_code').focus();
+                    errorMsg.textContent = 'Please enter your 2FA code';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Verify 2FA';
+                } else if (response.ok && result.api_key) {
+                    // Legacy login (no password set) - fallback
+                    successMsg.textContent = 'Login successful! Redirecting...';
+                    successMsg.style.display = 'block';
+
+                    setTimeout(() => {
+                        window.location.href = '/dashboard?key=' + result.api_key;
+                    }, 500);
+                } else {
+                    // Login failed
+                    errorMsg.textContent = result.message || 'Invalid email or password';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Log In';
+                }
+            } catch (error) {
+                errorMsg.textContent = 'Network error. Please try again.';
+                errorMsg.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Log In';
+            }
+        });
+    <\/script>
+</body>
+</html>`;
+}
+__name(getLoginHTML, "getLoginHTML");
+
+// src/html/reset-password.ts
+function getResetPasswordHTML() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Password - Insertabot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000000;
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(0, 245, 255, 0.03), transparent 50%);
+            pointer-events: none;
+        }
+        .reset-container {
+            background: rgba(10, 10, 10, 0.9);
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 0 40px rgba(0, 245, 255, 0.15);
+            position: relative;
+            z-index: 1;
+        }
+        .reset-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #00f5ff, #ff00ff, #00f5ff, transparent);
+            border-radius: 20px 20px 0 0;
+        }
+        h1 {
+            font-size: 36px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .subtitle { color: #94a3b8; margin-bottom: 32px; font-size: 14px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-size: 14px; color: #94a3b8; }
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            background: #000000;
+            border: 1px solid rgba(0, 245, 255, 0.2);
+            border-radius: 8px;
+            color: #e2e8f0;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #00f5ff;
+            box-shadow: 0 0 15px rgba(0, 245, 255, 0.2);
+        }
+        .btn {
+            width: 100%;
+            background: linear-gradient(135deg, #00f5ff, #ff00ff);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 16px;
+            margin-top: 8px;
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.3);
+            transition: all 0.2s;
+        }
+        .btn:hover {
+            box-shadow: 0 0 30px rgba(0, 245, 255, 0.5);
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .error {
+            background: linear-gradient(135deg, #ff0055, #ff00ff);
+            color: white;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            box-shadow: 0 0 15px rgba(255, 0, 85, 0.3);
+        }
+        .success {
+            background: linear-gradient(135deg, #00ff88, #00f5ff);
+            color: #000;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            display: none;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+            font-weight: 600;
+        }
+        .info {
+            background: rgba(0, 245, 255, 0.1);
+            border: 1px solid rgba(0, 245, 255, 0.3);
+            color: #00f5ff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .back-link {
+            text-align: center;
+            margin-top: 24px;
+        }
+        .back-link a {
+            color: #00f5ff;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        .back-link a:hover {
+            text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);
+        }
+        .password-requirements {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 8px;
+            line-height: 1.6;
+        }
+        .password-requirements ul {
+            margin-top: 4px;
+            margin-left: 20px;
+        }
+        #reset-form-container, #request-form-container {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="reset-container">
+        <h1>Reset Password</h1>
+        <p class="subtitle" id="page-subtitle">Enter your email to receive a password reset link</p>
+
+        <div id="error-msg" class="error"></div>
+        <div id="success-msg" class="success"></div>
+
+        <!-- Request Reset Token Form -->
+        <div id="request-form-container">
+            <form id="request-form">
+                <div class="form-group">
+                    <label>Email Address</label>
+                    <input type="email" name="email" id="request-email" required placeholder="you@company.com" autofocus />
+                </div>
+                <button type="submit" class="btn" id="request-btn">Send Reset Link</button>
+            </form>
+
+            <div class="back-link">
+                <a href="/login">\u2190 Back to login</a>
+            </div>
+        </div>
+
+        <!-- Reset Password Form (with token) -->
+        <div id="reset-form-container">
+            <div class="info" id="dev-info" style="display: none;">
+                <strong>Development Mode:</strong> Your reset token is: <code id="token-display" style="color: #fff;"></code>
+            </div>
+
+            <form id="reset-form">
+                <input type="hidden" name="token" id="reset-token" />
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" name="new_password" id="new-password" required placeholder="Enter new password" />
+                    <div class="password-requirements">
+                        Password must contain:
+                        <ul>
+                            <li>At least 8 characters</li>
+                            <li>One uppercase letter</li>
+                            <li>One lowercase letter</li>
+                            <li>One number</li>
+                            <li>One special character</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Confirm Password</label>
+                    <input type="password" name="confirm_password" id="confirm-password" required placeholder="Confirm new password" />
+                </div>
+                <button type="submit" class="btn" id="reset-btn">Reset Password</button>
+            </form>
+
+            <div class="back-link">
+                <a href="/login">\u2190 Back to login</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Check if we have a token in URL (for reset) or show request form
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+
+        if (token) {
+            // Show reset form
+            document.getElementById('reset-form-container').style.display = 'block';
+            document.getElementById('request-form-container').style.display = 'none';
+            document.getElementById('page-subtitle').textContent = 'Enter your new password';
+            document.getElementById('reset-token').value = token;
+        } else {
+            // Show request form
+            document.getElementById('reset-form-container').style.display = 'none';
+            document.getElementById('request-form-container').style.display = 'block';
+        }
+
+        // Handle password reset request
+        document.getElementById('request-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const btn = document.getElementById('request-btn');
+            const errorMsg = document.getElementById('error-msg');
+            const successMsg = document.getElementById('success-msg');
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            errorMsg.style.display = 'none';
+            successMsg.style.display = 'none';
+
+            const formData = new FormData(e.target);
+            const data = {
+                email: formData.get('email')
+            };
+
+            try {
+                const response = await fetch('/api/auth/password-reset-request', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    successMsg.textContent = result.message || 'If an account exists with this email, a password reset link has been sent.';
+                    successMsg.style.display = 'block';
+
+                    // In development, show the token
+                    if (result.reset_token) {
+                        document.getElementById('dev-info').style.display = 'block';
+                        document.getElementById('token-display').textContent = result.reset_token;
+
+                        // Auto-switch to reset form after 2 seconds
+                        setTimeout(() => {
+                            window.location.href = '/reset-password?token=' + result.reset_token;
+                        }, 2000);
+                    } else {
+                        // In production, just show success message
+                        document.getElementById('request-form').reset();
+                    }
+
+                    btn.textContent = 'Send Reset Link';
+                } else {
+                    errorMsg.textContent = result.message || 'Failed to send reset link';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Send Reset Link';
+                }
+            } catch (error) {
+                errorMsg.textContent = 'Network error. Please try again.';
+                errorMsg.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Send Reset Link';
+            }
+        });
+
+        // Handle password reset (with token)
+        document.getElementById('reset-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const btn = document.getElementById('reset-btn');
+            const errorMsg = document.getElementById('error-msg');
+            const successMsg = document.getElementById('success-msg');
+
+            btn.disabled = true;
+            btn.textContent = 'Resetting...';
+            errorMsg.style.display = 'none';
+            successMsg.style.display = 'none';
+
+            const formData = new FormData(e.target);
+            const newPassword = formData.get('new_password');
+            const confirmPassword = formData.get('confirm_password');
+
+            // Validate passwords match
+            if (newPassword !== confirmPassword) {
+                errorMsg.textContent = 'Passwords do not match';
+                errorMsg.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Reset Password';
+                return;
+            }
+
+            const data = {
+                token: formData.get('token'),
+                new_password: newPassword
+            };
+
+            try {
+                const response = await fetch('/api/auth/password-reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok && result.success) {
+                    successMsg.textContent = result.message || 'Password reset successfully! Redirecting to login...';
+                    successMsg.style.display = 'block';
+
+                    setTimeout(() => {
+                        window.location.href = '/login';
+                    }, 2000);
+                } else {
+                    errorMsg.textContent = result.message || 'Failed to reset password';
+                    errorMsg.style.display = 'block';
+                    btn.disabled = false;
+                    btn.textContent = 'Reset Password';
+                }
+            } catch (error) {
+                errorMsg.textContent = 'Network error. Please try again.';
+                errorMsg.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Reset Password';
+            }
+        });
+    <\/script>
+</body>
+</html>`;
+}
+__name(getResetPasswordHTML, "getResetPasswordHTML");
 
 // src/html/landing.ts
 function getLandingHTML(origin) {
@@ -5849,14 +7474,15 @@ function getLandingHTML(origin) {
         <div class="logo">Insertabot</div>
         <div class="nav-links">
             <a href="/playground">Playground</a>
-            <a href="/dashboard">Dashboard</a>
+            <a href="/login">Login</a>
             <a href="/signup" class="nav-cta">Get Started Free</a>
         </div>
     </nav>
     <div class="hero">
         <img src="/logo.png" alt="Insertabot Logo" style="max-width: 200px; margin-bottom: 20px;">
         <h1>Insertabot</h1>
-        <p>AI-Powered Chatbot Widget for Your Website</p>
+        <h2 style="font-size: 2em; margin: 20px 0 10px 0; font-weight: 700;">Insert an AI chatbot on your website in a flash!</h2>
+        <h3 style="font-size: 1.3em; margin: 0 0 30px 0; font-weight: 400; background: linear-gradient(135deg, #00f5ff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">Traveling at the speed of innovation</h3>
         <div style="display: flex; gap: 20px; justify-content: center; align-items: center;">
             <a href="/signup" class="cta-button">Get Started Free</a>
             <a href="/playground" class="cta-button" style="background: transparent; border: 2px solid #00f5ff; box-shadow: none;">Try Live Demo \u2192</a>
@@ -5874,7 +7500,7 @@ function getLandingHTML(origin) {
         </div>
         <div class="feature">
             <h3>\u{1F9E0} Smart AI</h3>
-            <p>Powered by Cloudflare Workers AI with web search capabilities for current information.</p>
+            <p>Integrated with <span style="color: #00f5ff; font-weight: 700; text-shadow: 0 0 10px rgba(0, 245, 255, 0.5);">Tavily</span> for current web search capabilities.</p>
         </div>
         <div class="feature">
             <h3>\u{1F512} Secure</h3>
@@ -5882,27 +7508,26 @@ function getLandingHTML(origin) {
         </div>
         <div class="feature">
             <h3>\u{1F4B3} Stripe Integration</h3>
-            <p>Built-in subscription management with Stripe for easy monetization.</p>
+            <p>Accept payments seamlessly with Stripe - credit cards, digital wallets, and more.</p>
         </div>
         <div class="feature">
-            <h3>\u{1F4CA} Analytics</h3>
-            <p>Track usage and performance with built-in analytics engine.</p>
+            <h3>\u{1F4DA} RAG Support</h3>
+            <p>Vectorize integration enables context-aware responses using your custom knowledge base.</p>
         </div>
     </div>
 
     <div class="demo">
         <h2>See It In Action</h2>
         <p>Click the chat button in the bottom right corner to try our demo bot!</p>
-        <p style="color: #999; font-size: 0.9rem;">Powered by Cloudflare Workers AI \u2022 Llama 3.1 8B</p>
     </div>
 
     <footer>
-        <p>&copy; 2024 Mistyk Media. All rights reserved.</p>
-        <p style="margin-top: 10px; opacity: 0.7;">Built with Cloudflare Workers \u2022 D1 \u2022 KV \u2022 Vectorize</p>
+        <p>&copy; 2026 Insertabot. All rights reserved.</p>
+        <p style="margin-top: 10px; opacity: 0.7;">Powered by Cloudflare Workers AI \u2022 D1 \u2022 KV \u2022 Vectorize</p>
     </footer>
 
     <!-- Live Demo Widget -->
-    <script src="${origin}/widget.js" data-api-key="ib_sk_demo_0fc7793e948d37c9ef0422ff3df1edc6bb47dfd9458ff2b03f9e614c57b3898f"><\/script>
+    <script src="${origin}/widget.js" data-api-key="ib_sk_demo_62132eda22a524d715034a7013a7b20e2a36f93b71b588d3354d74e4024e9ed7"><\/script>
 </body>
 </html>`;
 }
@@ -6478,8 +8103,8 @@ function isOriginAllowed(origin, allowedDomains) {
 __name(isOriginAllowed, "isOriginAllowed");
 function createCorsHeaders(origin, allowed) {
   return {
-    "Access-Control-Allow-Origin": allowed ? origin : "null",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Origin": allowed ? origin : "*",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin"
@@ -6914,6 +8539,7 @@ var index_default = {
     const publicRoutes = [
       "/",
       "/signup",
+      "/login",
       "/playground",
       "/health",
       "/dashboard",
@@ -6922,7 +8548,12 @@ var index_default = {
       "/widget.js",
       "/v1/stripe/webhook",
       "/checkout-success",
-      "/api/customer/create"
+      "/api/customer/create",
+      "/api/customer/login",
+      "/api/auth/set-password",
+      "/api/auth/password-reset-request",
+      "/api/auth/password-reset",
+      "/reset-password"
     ];
     if (publicRoutes.includes(url.pathname)) {
       const globalOrigins = env.CORS_ORIGINS.split(",").map((o) => o.trim());
@@ -6998,15 +8629,56 @@ var index_default = {
             }
           });
         }
+        if (url.pathname === "/login" && request.method === "GET") {
+          const html = getLoginHTML();
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "public, max-age=3600",
+              ...corsHeaders,
+              ...SECURITY_HEADERS
+            }
+          });
+        }
+        if (url.pathname === "/reset-password" && request.method === "GET") {
+          const html = getResetPasswordHTML();
+          return new Response(html, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-cache",
+              ...corsHeaders,
+              ...SECURITY_HEADERS
+            }
+          });
+        }
         if (url.pathname === "/dashboard" && request.method === "GET") {
-          const apiKeyParam = url.searchParams.get("key");
-          if (!apiKeyParam) {
-            throw new AuthenticationError(
-              "MISSING_API_KEY" /* MISSING_API_KEY */,
-              "API key required. Access dashboard via your signup confirmation or use ?key=YOUR_API_KEY"
-            );
+          let customer;
+          const sessionId = getSessionIdFromRequest(request);
+          if (sessionId) {
+            const session = await getSession(env.DB, sessionId);
+            if (session) {
+              const result = await env.DB.prepare("SELECT * FROM customers WHERE customer_id = ?").bind(session.customer_id).first();
+              customer = result;
+            }
           }
-          const customer = await getCustomerConfig(env.DB, apiKeyParam);
+          if (!customer) {
+            const apiKeyParam = url.searchParams.get("key");
+            if (apiKeyParam) {
+              customer = await getCustomerConfig(env.DB, apiKeyParam);
+            }
+          }
+          if (!customer) {
+            return new Response(null, {
+              status: 302,
+              headers: {
+                "Location": "/login",
+                ...corsHeaders,
+                ...SECURITY_HEADERS
+              }
+            });
+          }
           const widgetConfigData = await getWidgetConfig(env.DB, customer.customer_id);
           const html = getDashboardHTML(customer, widgetConfigData, url.origin);
           return new Response(html, {
@@ -7041,8 +8713,102 @@ var index_default = {
             }
           );
         }
+        if (url.pathname === "/api/customer/login" && request.method === "POST") {
+          const body = await request.json();
+          if (body.password) {
+            const result = await handleLogin(
+              env.DB,
+              { email: body.email, password: body.password, totp_code: body.totp_code, backup_code: body.backup_code },
+              clientIP,
+              request.headers.get("User-Agent")
+            );
+            const responseHeaders = {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+              ...SECURITY_HEADERS
+            };
+            if (result.sessionCookie) {
+              responseHeaders["Set-Cookie"] = result.sessionCookie;
+            }
+            return new Response(
+              JSON.stringify(result.response),
+              {
+                status: result.response.success ? 200 : 401,
+                headers: responseHeaders
+              }
+            );
+          }
+          const customer = await getCustomerByEmail(env.DB, body.email);
+          if (!customer) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "No account found with this email address"
+              }),
+              {
+                status: 404,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+              }
+            );
+          }
+          return new Response(
+            JSON.stringify({
+              success: true,
+              api_key: customer.api_key,
+              message: "Login successful"
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+            }
+          );
+        }
+        if (url.pathname === "/api/auth/set-password" && request.method === "POST") {
+          const body = await request.json();
+          const result = await handleSetPassword(
+            env.DB,
+            body,
+            clientIP,
+            request.headers.get("User-Agent")
+          );
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+            }
+          );
+        }
+        if (url.pathname === "/api/auth/password-reset-request" && request.method === "POST") {
+          const body = await request.json();
+          const result = await handlePasswordResetRequest(env.DB, body.email, clientIP);
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+            }
+          );
+        }
+        if (url.pathname === "/api/auth/password-reset" && request.method === "POST") {
+          const body = await request.json();
+          const result = await handlePasswordReset(env.DB, body, clientIP);
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+            }
+          );
+        }
         if (url.pathname === "/favicon.ico") {
-          return new Response(null, { status: 204 });
+          return new Response(null, {
+            status: 204,
+            headers: {
+              ...corsHeaders,
+              ...SECURITY_HEADERS
+            }
+          });
         }
         if (url.pathname === "/health" && request.method === "GET") {
           const response = await handleHealthCheck(env);
@@ -7146,6 +8912,102 @@ var index_default = {
             headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
           }
         );
+      }
+      const sessionId = getSessionIdFromRequest(request);
+      if (sessionId) {
+        const session = await getSession(env.DB, sessionId);
+        if (session) {
+          const sessionCustomerId = session.customer_id;
+          if (url.pathname === "/api/auth/logout" && request.method === "POST") {
+            const result = await handleLogout(env.DB, sessionId, clientIP);
+            return new Response(
+              JSON.stringify({ success: true, message: "Logged out successfully" }),
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Set-Cookie": result.cookie,
+                  ...corsHeaders,
+                  ...SECURITY_HEADERS
+                }
+              }
+            );
+          }
+          if (url.pathname === "/api/auth/change-password" && request.method === "POST") {
+            const body = await request.json();
+            const result = await handleChangePassword(
+              env.DB,
+              sessionCustomerId,
+              body,
+              clientIP,
+              request.headers.get("User-Agent")
+            );
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+              }
+            );
+          }
+          if (url.pathname === "/api/auth/2fa/enable" && request.method === "POST") {
+            const customerData = await withDatabase(
+              async () => env.DB.prepare("SELECT email FROM customers WHERE customer_id = ?").bind(sessionCustomerId).first(),
+              "getCustomerEmail"
+            );
+            if (!customerData) {
+              throw new AuthenticationError("INVALID_API_KEY" /* INVALID_API_KEY */, "Customer not found");
+            }
+            const result = await handleEnable2FA(
+              env.DB,
+              sessionCustomerId,
+              customerData.email,
+              clientIP,
+              request.headers.get("User-Agent")
+            );
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+              }
+            );
+          }
+          if (url.pathname === "/api/auth/2fa/verify" && request.method === "POST") {
+            const body = await request.json();
+            const result = await handleVerify2FA(
+              env.DB,
+              sessionCustomerId,
+              body,
+              clientIP,
+              request.headers.get("User-Agent")
+            );
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+              }
+            );
+          }
+          if (url.pathname === "/api/auth/2fa/disable" && request.method === "POST") {
+            const body = await request.json();
+            const result = await handleDisable2FA(
+              env.DB,
+              sessionCustomerId,
+              body.password,
+              clientIP,
+              request.headers.get("User-Agent")
+            );
+            return new Response(
+              JSON.stringify(result),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS }
+              }
+            );
+          }
+        }
       }
       throw new AppError("INVALID_REQUEST" /* INVALID_REQUEST */, "Endpoint not found", 404);
     } catch (error) {
