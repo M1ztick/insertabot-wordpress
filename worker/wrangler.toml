@@ -8,10 +8,20 @@ assets = { directory = "public" }
 
 # Observability - Enable logging for debugging and monitoring
 # Production uses 10% sampling to manage costs while still capturing issues
+[observability]
+enabled = false
+head_sampling_rate = 1
+
 [observability.logs]
 enabled = true
 head_sampling_rate = 0.1
+persist = true
 invocation_logs = true
+
+[observability.traces]
+enabled = true
+persist = true
+head_sampling_rate = 1
 
 # D1 Database binding
 [[d1_databases]]
