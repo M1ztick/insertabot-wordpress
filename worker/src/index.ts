@@ -51,6 +51,11 @@ import {
 import { getSession, getSessionIdFromRequest } from "./session";
 import { getLandingHTML } from "./html/landing";
 import { getWidgetScript } from "./html/widget-script";
+import { getPlaygroundHTML } from "./playground";
+import { getSignupHTML } from "./html/signup";
+import { getLoginHTML } from "./html/login";
+import { getResetPasswordHTML } from "./html/reset-password";
+import { getDashboardHTML } from "./html/dashboard";
 import {
   performWebSearch,
   formatSearchResultsForAI,
