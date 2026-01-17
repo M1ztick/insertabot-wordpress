@@ -4,7 +4,16 @@
  * Improved for accessibility, maintainability, and UX
  */
 
-import { escapeHtml } from '../utils';
+// Inline escapeHtml function to avoid import issues
+function escapeHtml(str: string | null | undefined): string {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 export function getDashboardHTML(
   customer: any,
