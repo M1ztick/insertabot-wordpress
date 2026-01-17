@@ -20,6 +20,7 @@ import {
   checkLoginAttempts,
   calculateLockTime,
 } from "./auth";
+import { sendPasswordResetEmail } from "./email-service";
 import {
   createSession,
   getSession,
@@ -182,6 +183,18 @@ export async function handleLogin(
       "Invalid email or password"
     );
   }
+
+  // Check if email is verified (optional - can be enforced or just warned)
+  // Uncomment to enforce email verification before login
+  /*
+  if (customer.email_verified === 0) {
+    throw new AppError(
+      ErrorCode.INVALID_REQUEST,
+      "Please verify your email address before logging in. Check your inbox for the verification email.",
+      403
+    );
+  }
+  */
 
   // Check if account is locked
   const lockCheck = checkLoginAttempts(
@@ -653,7 +666,14 @@ export async function handlePasswordResetRequest(
     ip_address: ipAddress || undefined,
   });
 
-  // TODO: Send email with reset link
+  // Send password reset email
+  const emailResult = await sendPasswordResetEmail(email, resetToken);
+
+  if (!emailResult.success) {
+    console.error("Failed to send password reset email:", emailResult.error);
+    // Don't throw error to prevent email enumeration
+  }
+
   return {
     success: true,
     message:

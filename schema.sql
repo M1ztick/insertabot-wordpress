@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS customers (
     password_reset_expires INTEGER, -- Unix timestamp
     last_login_at INTEGER,
 
+    -- Email Verification
+    email_verified BOOLEAN DEFAULT 0,
+    email_verification_token TEXT,
+    email_verification_expires INTEGER, -- Unix timestamp
+    email_verification_sent_at INTEGER, -- Unix timestamp for rate limiting
+
     -- Rate limiting
     rate_limit_per_hour INTEGER DEFAULT 5,
     rate_limit_per_day INTEGER DEFAULT 20,
@@ -46,6 +52,7 @@ CREATE INDEX idx_customers_api_key ON customers(api_key);
 CREATE INDEX idx_customers_email ON customers(email);
 CREATE INDEX idx_customers_status ON customers(status);
 CREATE INDEX idx_customers_reset_token ON customers(password_reset_token);
+CREATE INDEX idx_customers_verification_token ON customers(email_verification_token);
 
 -- User sessions
 CREATE TABLE IF NOT EXISTS sessions (
@@ -258,6 +265,12 @@ VALUES (
 INSERT INTO widget_configs (customer_id, bot_name, greeting_message, system_prompt, created_at, updated_at)
 VALUES (
     'cust_demo_001',
+    'Demo Bot',
+    'Welcome! I\'m here to help you explore Insertabot\'s capabilities.',
+    'You are a knowledgeable and friendly AI assistant who loves helping people. You believe that great chatbots should be conversational, helpful, and build genuine connections with users. You understand that modern chatbots are powerful tools that can transform customer service by providing instant, personalized assistance 24/7. When engaging with users, be warm and personable while remaining professional. Share insights when appropriate, ask clarifying questions to better understand needs, and provide thoughtful, well-explained answers. Remember: the best chatbot experiences feel like talking to a helpful friend who genuinely cares about solving problems.',
+    strftime('%s', 'now'),
+    strftime('%s', 'now')
+);001',
     'Mistyk Assistant',
     'Welcome to Mistyk Media! How can I help you today?',
     'You are a knowledgeable and enthusiastic assistant for Mistyk Media, a creative agency specializing in web design and digital marketing. You''re passionate about helping visitors learn about our services, answer questions about web development, design, and digital marketing, and guide them toward solutions that fit their needs. Be conversational and friendly while staying professional. Share insights about modern web technologies, design trends, and digital marketing strategies when relevant. Your goal is to make every interaction feel personal and valuable, building trust and showcasing the quality of service Mistyk Media provides.',

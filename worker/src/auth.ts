@@ -354,6 +354,17 @@ export function generateResetToken(): string {
 		.join('');
 }
 
+/**
+ * Generate an email verification token
+ */
+export function generateEmailVerificationToken(): string {
+	const buffer = new Uint8Array(32);
+	crypto.getRandomValues(buffer);
+	return Array.from(buffer)
+		.map(b => b.toString(16).padStart(2, '0'))
+		.join('');
+}
+
 // ==================== Rate Limiting for Login Attempts ====================
 
 export interface LoginAttemptResult {

@@ -42,12 +42,13 @@ import {
   handlePasswordResetRequest,
   handlePasswordReset,
 } from "./auth-endpoints";
+import {
+  handleSendVerificationEmail,
+  handleVerifyEmail,
+  handleResendVerificationEmail,
+  handleCheckVerificationStatus,
+} from "./email-verification";
 import { getSession, getSessionIdFromRequest } from "./session";
-import { getPlaygroundHTML } from "./playground";
-import { getDashboardHTML } from "./html/dashboard";
-import { getSignupHTML } from "./html/signup";
-import { getLoginHTML } from "./html/login";
-import { getResetPasswordHTML } from "./html/reset-password";
 import { getLandingHTML } from "./html/landing";
 import { getWidgetScript } from "./html/widget-script";
 import {
@@ -677,6 +678,8 @@ export default {
       '/v1/stripe/webhook', '/checkout-success',
       '/api/customer/create', '/api/customer/login',
       '/api/auth/set-password', '/api/auth/password-reset-request', '/api/auth/password-reset',
+      '/api/auth/email/send-verification', '/api/auth/email/verify', '/api/auth/email/resend',
+      '/api/auth/email/status', '/verify-email',
       '/reset-password'
     ];
     
@@ -968,6 +971,139 @@ export default {
               headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
             }
           );
+        }
+
+        // Send email verification
+        if (url.pathname === "/api/auth/email/send-verification" && request.method === "POST") {
+          const body = await request.json() as { email: string };
+          const result = await handleSendVerificationEmail(env.DB, body, clientIP);
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Verify email with token
+        if (url.pathname === "/api/auth/email/verify" && request.method === "POST") {
+          const body = await request.json() as { token: string };
+          const result = await handleVerifyEmail(env.DB, body, clientIP);
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Resend verification email
+        if (url.pathname === "/api/auth/email/resend" && request.method === "POST") {
+          const body = await request.json() as { email: string };
+          const result = await handleResendVerificationEmail(env.DB, body, clientIP);
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Check email verification status
+        if (url.pathname === "/api/auth/email/status" && request.method === "POST") {
+          const body = await request.json() as { email: string };
+          const result = await handleCheckVerificationStatus(env.DB, body);
+
+          return new Response(
+            JSON.stringify(result),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...corsHeaders, ...SECURITY_HEADERS },
+            }
+          );
+        }
+
+        // Email verification page (GET request with token in query params)
+        if (url.pathname === "/verify-email" && request.method === "GET") {
+          const token = url.searchParams.get('token');
+
+          if (!token) {
+            return new Response(
+              `<!DOCTYPE html>
+              <html>
+              <head><title>Email Verification</title></head>
+              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+                <h1>❌ Invalid Link</h1>
+                <p>This verification link is invalid. Please check your email for the correct link.</p>
+                <a href="/login" style="color: #6366f1;">Return to Login</a>
+              </body>
+              </html>`,
+              {
+                status: 400,
+                headers: {
+                  "Content-Type": "text/html; charset=utf-8",
+                  ...corsHeaders,
+                  ...SECURITY_HEADERS,
+                },
+              }
+            );
+          }
+
+          try {
+            const result = await handleVerifyEmail(env.DB, { token }, clientIP);
+
+            return new Response(
+              `<!DOCTYPE html>
+              <html>
+              <head>
+                <title>Email Verified</title>
+                <meta http-equiv="refresh" content="3;url=/login">
+              </head>
+              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+                <h1>✅ Email Verified!</h1>
+                <p>${result.message}</p>
+                <p>Redirecting to login in 3 seconds...</p>
+                <a href="/login" style="color: #6366f1;">Click here if not redirected</a>
+              </body>
+              </html>`,
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/html; charset=utf-8",
+                  ...corsHeaders,
+                  ...SECURITY_HEADERS,
+                },
+              }
+            );
+          } catch (error) {
+            const errorMessage = error instanceof AppError ? error.message : 'Verification failed';
+
+            return new Response(
+              `<!DOCTYPE html>
+              <html>
+              <head><title>Verification Failed</title></head>
+              <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 100px auto; text-align: center;">
+                <h1>❌ Verification Failed</h1>
+                <p>${errorMessage}</p>
+                <a href="/login" style="color: #6366f1;">Return to Login</a>
+              </body>
+              </html>`,
+              {
+                status: 400,
+                headers: {
+                  "Content-Type": "text/html; charset=utf-8",
+                  ...corsHeaders,
+                  ...SECURITY_HEADERS,
+                },
+              }
+            );
+          }
         }
 
         if (url.pathname === "/favicon.ico") {
