@@ -404,7 +404,7 @@ export async function handleLogin(
 // ==================== Logout ====================
 
 export async function handleLogout(
-  db: IDBDatabase,
+  db: D1Database,
   sessionId: string,
   ipAddress: string | null
 ): Promise<{ success: boolean; cookie: string }> {
@@ -435,7 +435,7 @@ export interface ChangePasswordRequest {
 }
 
 export async function handleChangePassword(
-  db: IDBDatabase,
+  db: D1Database,
   customerId: string,
   request: ChangePasswordRequest,
   ipAddress: string | null,
@@ -529,9 +529,12 @@ export async function handleChangePassword(
 // ==================== 2FA Enrollment ====================
 
 import {
-  handleEnable2FA,
-  handleVerify2FA,
+  handleEnable2FA as enable2FA,
+  handleVerify2FA as verify2FA,
 } from './2fa';
+
+// Re-export for use in index.ts
+export { enable2FA as handleEnable2FA, verify2FA as handleVerify2FA };
 
 export async function handleDisable2FA(
   db: D1Database,
