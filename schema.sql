@@ -14,6 +14,18 @@ CREATE TABLE IF NOT EXISTS customers (
     created_at INTEGER NOT NULL, -- Unix timestamp
     updated_at INTEGER NOT NULL,
 
+    -- Auth
+    password_hash TEXT,
+    password_salt TEXT,
+    totp_enabled BOOLEAN DEFAULT 0,
+    totp_secret TEXT,
+    backup_codes TEXT, -- JSON array of hashed backup codes
+    failed_login_attempts INTEGER DEFAULT 0,
+    account_locked_until INTEGER, -- Unix timestamp
+    password_reset_token TEXT,
+    password_reset_expires INTEGER, -- Unix timestamp
+    last_login_at INTEGER,
+
     -- Rate limiting
     rate_limit_per_hour INTEGER DEFAULT 5,
     rate_limit_per_day INTEGER DEFAULT 20,
@@ -33,6 +45,45 @@ CREATE TABLE IF NOT EXISTS customers (
 CREATE INDEX idx_customers_api_key ON customers(api_key);
 CREATE INDEX idx_customers_email ON customers(email);
 CREATE INDEX idx_customers_status ON customers(status);
+CREATE INDEX idx_customers_reset_token ON customers(password_reset_token);
+
+-- User sessions
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT UNIQUE NOT NULL,
+    customer_id TEXT NOT NULL,
+
+    ip_address TEXT,
+    user_agent TEXT,
+
+    created_at INTEGER NOT NULL, -- Unix timestamp
+    expires_at INTEGER NOT NULL, -- Unix timestamp
+    last_seen_at INTEGER NOT NULL, -- Unix timestamp
+
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_sessions_id ON sessions(session_id);
+CREATE INDEX idx_sessions_customer ON sessions(customer_id);
+CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+
+-- Security audit trail
+CREATE TABLE IF NOT EXISTS security_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_id TEXT,
+
+    event_type TEXT NOT NULL, -- e.g., login_success, login_failed, 2fa_enabled, password_changed
+    timestamp INTEGER NOT NULL, -- Unix timestamp
+
+    ip_address TEXT,
+    user_agent TEXT,
+    metadata TEXT, -- JSON string for additional details
+
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_security_logs_customer_event ON security_logs(customer_id, event_type);
+CREATE INDEX idx_security_logs_timestamp ON security_logs(timestamp);
 
 -- Widget configurations
 CREATE TABLE IF NOT EXISTS widget_configs (
