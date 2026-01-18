@@ -1,4 +1,4 @@
-# Insertabot by Mistyk Media
+# insertabot-v1.0
 
 AI-powered chatbot widget for websites. Embed customizable AI chat on any site in minutes.
 
