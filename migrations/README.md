@@ -22,7 +22,7 @@ npm run db:migrate:avatars
 npm run db:migrate:avatars:prod
 
 # Or run directly with wrangler
-wrangler d1 execute insertabot-db-dev --file=migrations/add-avatar-to-existing-configs.sql --remote
+wrangler d1 execute insertabot-development --file=migrations/add-avatar-to-existing-configs.sql --remote
 ```
 
 ## Migration Best Practices

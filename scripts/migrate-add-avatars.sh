@@ -7,7 +7,7 @@ set -e
 ENVIRONMENT="${1:-development}"
 
 if [ "$ENVIRONMENT" = "production" ]; then
-    DB_NAME="insertabot-db"
+    DB_NAME="insertabot-production"
     echo "⚠️  Running migration on PRODUCTION database: $DB_NAME"
     read -p "Are you sure? (yes/no): " CONFIRM
     if [ "$CONFIRM" != "yes" ]; then
@@ -15,7 +15,7 @@ if [ "$ENVIRONMENT" = "production" ]; then
         exit 0
     fi
 else
-    DB_NAME="insertabot-db-dev"
+    DB_NAME="insertabot-development"
     echo "Running migration on DEVELOPMENT database: $DB_NAME"
 fi
 
