@@ -15,23 +15,16 @@ This directory contains SQL migration scripts for updating the Insertabot databa
 **How to run:**
 
 ```bash
-# For development database
+# Run migration on production database (requires confirmation)
 npm run db:migrate:avatars
 
-# For production database (requires confirmation)
-npm run db:migrate:avatars:prod
-
 # Or run directly with wrangler
-wrangler d1 execute insertabot-development --file=migrations/add-avatar-to-existing-configs.sql --remote
+npx wrangler d1 execute insertabot-production --file=migrations/add-avatar-to-existing-configs.sql --remote
 ```
 
 ## Migration Best Practices
 
-1. **Always test on development first**
-   - Run migrations on dev database before production
-   - Verify results with SELECT queries
-
-2. **Backup before production migrations**
+1. **Backup before running migrations**
    ```bash
    npm run db:backup
    ```

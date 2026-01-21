@@ -1,22 +1,15 @@
 #!/bin/bash
 # Migration script to add avatars to existing widget configurations
-# Usage: ./scripts/migrate-add-avatars.sh [production|development]
+# Usage: ./scripts/migrate-add-avatars.sh
 
 set -e
 
-ENVIRONMENT="${1:-development}"
-
-if [ "$ENVIRONMENT" = "production" ]; then
-    DB_NAME="insertabot-production"
-    echo "⚠️  Running migration on PRODUCTION database: $DB_NAME"
-    read -p "Are you sure? (yes/no): " CONFIRM
-    if [ "$CONFIRM" != "yes" ]; then
-        echo "Migration cancelled."
-        exit 0
-    fi
-else
-    DB_NAME="insertabot-development"
-    echo "Running migration on DEVELOPMENT database: $DB_NAME"
+DB_NAME="insertabot-production"
+echo "⚠️  Running migration on PRODUCTION database: $DB_NAME"
+read -p "Are you sure? (yes/no): " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Migration cancelled."
+    exit 0
 fi
 
 echo ""
