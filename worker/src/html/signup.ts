@@ -6,34 +6,6 @@ export function getSignupHTML(): string {
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Google tag (gtag.js) - Loaded only after user consent -->
-    <script>
-      window.dataLayer = window.dataLayer || [];
-      
-      function gtag(){dataLayer.push(arguments);}
-      
-      function loadGoogleTag() {
-        var s = document.createElement('script');
-        s.async = true;
-        s.src = 'https://www.googletagmanager.com/gtag/js?id=G-PDSX0R0Q3Y';
-        document.head.appendChild(s);
-        
-        gtag('js', new Date());
-        gtag('config', 'G-PDSX0R0Q3Y');
-      }
-      
-      // Load if consent already exists
-      if (localStorage.getItem('cookieConsent') === 'true') {
-        loadGoogleTag();
-      }
-      
-      // Listen for consent being granted
-      window.addEventListener('storage', function(e) {
-        if (e.key === 'cookieConsent' && e.newValue === 'true') {
-          loadGoogleTag();
-        }
-      });
-    </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign Up - Insertabot</title>
@@ -200,8 +172,6 @@ export function getSignupHTML(): string {
     </style>
 </head>
 <body>
-    <div id="cookie-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1f2937;color:#fff;padding:20px;z-index:9999999;box-shadow:0 -2px 10px rgba(0,0,0,0.3);"><div style="max-width:800px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;"><p style="margin:0;font-size:14px;flex:1;min-width:250px;">We use cookies to improve your experience. By clicking "Accept", you consent to our use of cookies.</p><div style="display:flex;gap:10px;"><button onclick="acceptCookies()" style="background:#10b981;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Accept</button><button onclick="declineCookies()" style="background:#6b7280;color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-weight:600;">Decline</button></div></div></div>
-    <script>if(!localStorage.getItem('cookieConsent'))document.getElementById('cookie-banner').style.display='block';function acceptCookies(){localStorage.setItem('cookieConsent','true');document.getElementById('cookie-banner').style.display='none';location.reload();}function declineCookies(){localStorage.setItem('cookieConsent','false');document.getElementById('cookie-banner').style.display='none';}</script>
     <div class="signup-container">
         <h1>Start Free Trial</h1>
         <p class="subtitle">Get 20 free messages per day. No credit card required.</p>

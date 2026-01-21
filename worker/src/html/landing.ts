@@ -167,6 +167,36 @@ export function getLandingHTML(origin: string): string {
       color: var(--cyan);
     }
 
+    /* ---------- MISSION ---------- */
+
+    .mission {
+      max-width: 900px;
+      margin: 80px auto;
+      padding: 0 20px;
+      text-align: center;
+    }
+
+    .mission h2 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      margin-bottom: 28px;
+      background: linear-gradient(135deg, var(--cyan), var(--magenta));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .mission p {
+      font-size: 1.1rem;
+      line-height: 1.8;
+      color: var(--text);
+      margin-bottom: 20px;
+      text-align: left;
+    }
+
+    .mission p:last-of-type {
+      margin-bottom: 0;
+    }
+
     /* ---------- FEATURES ---------- */
 
     main {
@@ -277,6 +307,12 @@ export function getLandingHTML(origin: string): string {
     <a href="/signup" class="btn btn-primary">Get Started Free</a>
     <a href="/playground" class="btn btn-outline">Try Live Demo →</a>
   </div>
+</section>
+
+<section class="mission">
+  <h2>Who We Are</h2>
+  <p>We are pioneers standing elbow-to-elbow with you on the front lines of the digital market. At Insertabot, we know the grit it takes to build something real—to deliver quality without sacrificing our values for a paycheck.</p>
+  <p>We built Insertabot as a small but ongoing effort to close the resource gap between corporate giants and 'us little guys.' We refuse to compromise on privacy or ethics just to make a buck. That's why we created a tool that actually works, protects your users, and doesn't cost a fortune. Affordable, ethical, and built for the independent.</p>
 </section>
 
 <main>

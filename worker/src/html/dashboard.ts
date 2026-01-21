@@ -29,35 +29,6 @@ export function getDashboardHTML(
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Dashboard – Insertabot</title>
 
-  <!-- Google Analytics (loaded after consent) -->
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-
-    function loadGoogleTag() {
-      if (window.__gaLoaded) return;
-      window.__gaLoaded = true;
-
-      var s = document.createElement('script');
-      s.async = true;
-      s.src = 'https://www.googletagmanager.com/gtag/js?id=G-PDSX0R0Q3Y';
-      document.head.appendChild(s);
-
-      gtag('js', new Date());
-      gtag('config', 'G-PDSX0R0Q3Y');
-    }
-
-    if (localStorage.getItem('cookieConsent') === 'true') {
-      loadGoogleTag();
-    }
-
-    window.addEventListener('storage', function(e) {
-      if (e.key === 'cookieConsent' && e.newValue === 'true') {
-        loadGoogleTag();
-      }
-    });
-  </script>
-
   <style>
     :root {
       --bg: #000;
