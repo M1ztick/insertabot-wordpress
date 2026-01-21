@@ -197,12 +197,57 @@ export function getLandingHTML(origin: string): string {
       margin-bottom: 0;
     }
 
+    .mission-quote {
+      position: relative;
+      padding: 0 30px;
+    }
+
+    .mission-quote::before {
+      content: '"';
+      position: absolute;
+      left: 0;
+      top: -10px;
+      font-size: 4rem;
+      color: var(--cyan);
+      opacity: 0.5;
+      line-height: 1;
+    }
+
+    .mission-quote::after {
+      content: '"';
+      position: absolute;
+      right: 0;
+      bottom: -30px;
+      font-size: 4rem;
+      color: var(--magenta);
+      opacity: 0.5;
+      line-height: 1;
+    }
+
+    .mission-attribution {
+      margin-top: 24px;
+      font-style: italic;
+      font-size: 1rem;
+      color: var(--cyan);
+      text-align: right;
+    }
+
     /* ---------- FEATURES ---------- */
 
     main {
       max-width: 1200px;
       margin: 80px auto;
       padding: 0 20px;
+    }
+
+    .features-heading {
+      font-size: 2.4rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 50px;
+      background: linear-gradient(135deg, var(--cyan), var(--magenta));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     .features {
@@ -311,11 +356,15 @@ export function getLandingHTML(origin: string): string {
 
 <section class="mission">
   <h2>Who We Are</h2>
-  <p>We are pioneers standing elbow-to-elbow with you on the front lines of the digital market. At Insertabot, we know the grit it takes to build something real—to deliver quality without sacrificing our values for a paycheck.</p>
-  <p>We built Insertabot as a small but ongoing effort to close the resource gap between corporate giants and 'us little guys.' We refuse to compromise on privacy or ethics just to make a buck. That's why we created a tool that actually works, protects your users, and doesn't cost a fortune. Affordable, ethical, and built for the independent.</p>
+  <div class="mission-quote">
+    <p>We are pioneers standing elbow-to-elbow with you on the front lines of the digital market. At Insertabot, we know the grit it takes to build something real—to deliver quality without sacrificing our values for a paycheck.</p>
+    <p>We built Insertabot as a small but ongoing effort to close the resource gap between corporate giants and 'us little guys.' We refuse to compromise on privacy or ethics just to make a buck. That's why we created a tool that actually works, protects your users, and doesn't cost a fortune. Affordable, ethical, and built for the independent.</p>
+  </div>
+  <p class="mission-attribution">— Mistyk Media</p>
 </section>
 
 <main>
+  <h2 class="features-heading">Product Features</h2>
   <section class="features">
     <article class="feature">
       <h3>⚡ Instant Setup</h3>
@@ -338,8 +387,8 @@ export function getLandingHTML(origin: string): string {
     </article>
 
     <article class="feature">
-      <h3>💳 Stripe Billing</h3>
-      <p>Monetize with subscriptions, cards, and digital wallets.</p>
+      <h3>🛡️ Privacy Focused</h3>
+      <p>No tracking, no third-party analytics. Your data stays yours.</p>
     </article>
 
     <article class="feature">
