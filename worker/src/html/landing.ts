@@ -181,6 +181,12 @@ export function getLandingHTML(origin: string): string {
       gap: 28px;
     }
 
+    @media (min-width: 768px) {
+      .features {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+
     .feature {
       background: var(--panel);
       border-radius: var(--radius);

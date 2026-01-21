@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS widget_configs (
     position TEXT DEFAULT 'bottom-right', -- bottom-right, bottom-left
     greeting_message TEXT DEFAULT 'Hi! How can I help you today?',
     bot_name TEXT DEFAULT 'Insertabot',
-    bot_avatar_url TEXT,
+    bot_avatar_url TEXT DEFAULT '/insertabot-avatar.png',
 
     -- Behavior
     initial_message TEXT,
