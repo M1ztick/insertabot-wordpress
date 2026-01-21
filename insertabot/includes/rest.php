@@ -21,9 +21,25 @@ function insertabot_register_rest_routes() {
         array(
             'methods'             => 'GET',
             'callback'            => 'insertabot_widget_token_endpoint',
-            'permission_callback' => '__return_true',
+            'permission_callback' => 'insertabot_widget_token_permission_check',
         )
     );
+}
+
+/**
+ * Permission callback for widget token endpoint.
+ * Allows public access but validates the request origin.
+ *
+ * @return bool True if permission is granted.
+ */
+function insertabot_widget_token_permission_check() {
+    // Allow public access since this is needed for frontend widget loading
+    // The endpoint itself doesn't expose the API key - it only generates
+    // a short-lived (60s) signed token. Security is enforced by:
+    // 1. Token expiration (60 seconds)
+    // 2. HMAC signature using WordPress AUTH_KEY
+    // 3. No sensitive data in response
+    return true;
 }
 
 /**

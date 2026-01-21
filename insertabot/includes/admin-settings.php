@@ -315,7 +315,7 @@ final class Insertabot_Admin_Settings {
 			<?php if (!$has_key) : ?>
 				<div class="insertabot-welcome-card">
 					<div class="insertabot-welcome-content">
-						<h2>🚀 Welcome to Insertabot!</h2>
+						<h2><span class="dashicons dashicons-rocket" style="font-size: 1.2em; vertical-align: middle;"></span> Welcome to Insertabot!</h2>
 						<p class="insertabot-subtitle">Add AI chat to a WordPress site in 3 simple steps:</p>
 
 						<div class="insertabot-steps">
@@ -350,13 +350,13 @@ final class Insertabot_Admin_Settings {
 						</div>
 
 						<div class="insertabot-features">
-							<h3>✨ What Free Tier Includes:</h3>
+							<h3><span class="dashicons dashicons-star-filled" style="font-size: 1.2em; vertical-align: middle;"></span> What Free Tier Includes:</h3>
 							<ul>
-								<li>🤖 <strong>50 AI conversations per day</strong></li>
-								<li>🌐 <strong>Real-time web search</strong></li>
-								<li>🎨 Customizable colors and branding</li>
-								<li>📱 Mobile-friendly chat widget</li>
-								<li>⚡ Setup in minutes</li>
+								<li><span class="dashicons dashicons-admin-users"></span> <strong>50 AI conversations per day</strong></li>
+								<li><span class="dashicons dashicons-search"></span> <strong>Real-time web search</strong></li>
+								<li><span class="dashicons dashicons-art"></span> Customizable colors and branding</li>
+								<li><span class="dashicons dashicons-smartphone"></span> Mobile-friendly chat widget</li>
+								<li><span class="dashicons dashicons-performance"></span> Setup in minutes</li>
 							</ul>
 						</div>
 					</div>
@@ -374,7 +374,7 @@ final class Insertabot_Admin_Settings {
 					<?php
 						settings_fields('insertabot_settings_group');
 						do_settings_sections(self::PAGE_SLUG);
-						submit_button('💾 Save Settings', 'primary', 'submit', true, ['class' => 'button-large']);
+						submit_button('Save Settings', 'primary', 'submit', true, ['class' => 'button-large']);
 					?>
 				</form>
 			</div>
@@ -382,7 +382,7 @@ final class Insertabot_Admin_Settings {
 			<?php if ($has_key) : ?>
 				<div class="insertabot-upgrade-card">
 					<div class="insertabot-upgrade-content">
-						<div class="insertabot-upgrade-icon">⚡</div>
+						<div class="insertabot-upgrade-icon"><span class="dashicons dashicons-performance"></span></div>
 						<h2>Upgrade to Pro - $9.99/month</h2>
 						<p class="insertabot-upgrade-subtitle">Get unlimited AI conversations + real-time web search</p>
 
@@ -390,25 +390,25 @@ final class Insertabot_Admin_Settings {
 							<div class="insertabot-upgrade-col">
 								<h3>Free (Current)</h3>
 								<ul>
-									<li>✅ 50 messages/day</li>
-									<li>✅ Basic customization</li>
-									<li>⚠️ “Powered by Insertabot” branding</li>
+									<li><span class="dashicons dashicons-yes"></span> 50 messages/day</li>
+									<li><span class="dashicons dashicons-yes"></span> Basic customization</li>
+									<li><span class="dashicons dashicons-warning"></span> "Powered by Insertabot" branding</li>
 								</ul>
 							</div>
 
 							<div class="insertabot-upgrade-col insertabot-upgrade-col-pro">
 								<h3>Pro ($9.99/mo)</h3>
 								<ul>
-									<li>🚀 <strong>Unlimited</strong> playground messages</li>
-									<li>🚀 <strong>500</strong> embedded messages/month</li>
-									<li>🚀 <strong>Remove branding</strong></li>
+									<li><span class="dashicons dashicons-star-filled"></span> <strong>Unlimited</strong> playground messages</li>
+									<li><span class="dashicons dashicons-star-filled"></span> <strong>500</strong> embedded messages/month</li>
+									<li><span class="dashicons dashicons-star-filled"></span> <strong>Remove branding</strong></li>
 							</ul>
 						</div>
 					</div>
 
 					<?php if ($pricing) : ?>
 						<a href="<?php echo esc_url($pricing); ?>" class="button button-primary button-large" target="_blank" rel="noopener noreferrer">
-							🚀 Upgrade to Pro
+							Upgrade to Pro
 						</a>
 					<?php endif; ?>
 				</div>
@@ -417,7 +417,7 @@ final class Insertabot_Admin_Settings {
 
 		<?php if ($docs) : ?>
 			<div class="insertabot-help-card">
-				<h3>📚 Need Help?</h3>
+				<h3><span class="dashicons dashicons-book"></span> Need Help?</h3>
 				<p>Check out our documentation for setup guides and troubleshooting.</p>
 				<a href="<?php echo esc_url($docs); ?>" class="button" target="_blank" rel="noopener noreferrer">
 					View Documentation →

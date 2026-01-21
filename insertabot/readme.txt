@@ -1,7 +1,7 @@
 === Insertabot - AI Chatbot Solution ===
 Contributors: mistykmedia
 Tags: chatbot, ai, chat, support, customer service
-Requires at least: 5.0
+Requires at least: 5.9
 Tested up to: 6.7
 Stable tag: 1.0.0
 Requires PHP: 7.4

@@ -1,10 +1,10 @@
-# Copyright (C) 2025 Mistyk Media
+# Copyright (C) 2026 Mistyk Media
 # This file is distributed under the same license as the Insertabot - AI Chatbot Solution plugin.
 msgid ""
 msgstr ""
 "Project-Id-Version: Insertabot - AI Chatbot Solution 1.0.0\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/insertabot\n"
-"POT-Creation-Date: 2025-01-15 23:52+00:00\n"
+"POT-Creation-Date: 2026-01-20 12:00+00:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
