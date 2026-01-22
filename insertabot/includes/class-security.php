@@ -170,7 +170,7 @@ class Insertabot_Security {
         if (!empty($api_key) && !preg_match('/^ib_sk_[a-zA-Z0-9_]{32,}$/', $api_key)) {
             return new WP_Error(
                 'invalid_api_key',
-                __('Invalid API key format. Key should start with "ib_sk_" followed by at least 32 characters.', 'insertabot')
+                __('Invalid API key format. Key should start with "ib_sk_" followed by at least 32 characters.', 'insertabot-ai-chatbot-solution')
             );
         }
         

@@ -21,7 +21,7 @@ add_filter( 'wp_privacy_personal_data_erasers', 'insertabot_register_personal_da
  */
 function insertabot_register_personal_data_exporter( array $exporters ) {
     $exporters['insertabot-logs'] = array(
-        'exporter_friendly_name' => __( 'Insertabot security logs', 'insertabot' ),
+        'exporter_friendly_name' => __( 'Insertabot security logs', 'insertabot-ai-chatbot-solution' ),
         'callback'               => 'insertabot_personal_data_exporter',
     );
     return $exporters;
@@ -71,7 +71,7 @@ function insertabot_personal_data_exporter( $email_address, $page = 1 ) {
 
             $data[] = array(
                 'group_id'    => 'insertabot-logs',
-                'group_label' => __( 'Insertabot security logs', 'insertabot' ),
+                'group_label' => __( 'Insertabot security logs', 'insertabot-ai-chatbot-solution' ),
                 'item_id'     => $item_id,
                 'data'        => $entries,
             );
@@ -92,7 +92,7 @@ function insertabot_personal_data_exporter( $email_address, $page = 1 ) {
  */
 function insertabot_register_personal_data_eraser( array $erasers ) {
     $erasers['insertabot-logs'] = array(
-        'eraser_friendly_name' => __( 'Insertabot security logs', 'insertabot' ),
+        'eraser_friendly_name' => __( 'Insertabot security logs', 'insertabot-ai-chatbot-solution' ),
         'callback'             => 'insertabot_personal_data_eraser',
     );
     return $erasers;
@@ -141,7 +141,7 @@ function insertabot_personal_data_eraser( $email_address, $page = 1 ) {
             'item_id'     => 'insertabot-logs',
             'description' => sprintf(
                 /* translators: %d: number of log entries removed */
-                _n( '%d security log entry removed', '%d security log entries removed', $removed, 'insertabot' ),
+                _n( '%d security log entry removed', '%d security log entries removed', $removed, 'insertabot-ai-chatbot-solution' ),
                 $removed
             ),
         );

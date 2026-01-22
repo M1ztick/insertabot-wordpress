@@ -38,8 +38,8 @@ final class Insertabot_Admin_Settings {
 	 */
 	public static function add_menu() {
 		add_options_page(
-			esc_html__( 'Insertabot Settings', 'insertabot' ),
-			esc_html__( 'Insertabot', 'insertabot' ),
+			esc_html__( 'Insertabot Settings', 'insertabot-ai-chatbot-solution' ),
+			esc_html__( 'Insertabot', 'insertabot-ai-chatbot-solution' ),
 			'manage_options',
 			self::PAGE_SLUG,
 			array( __CLASS__, 'render_page' )
@@ -89,7 +89,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_KEY,
-			esc_html__( 'API Key', 'insertabot' ),
+			esc_html__( 'API Key', 'insertabot-ai-chatbot-solution' ),
 			array( __CLASS__, 'field_api_key' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -97,7 +97,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_EN,
-			esc_html__( 'Enable Chatbot', 'insertabot' ),
+			esc_html__( 'Enable Chatbot', 'insertabot-ai-chatbot-solution' ),
 			array( __CLASS__, 'field_enabled' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -105,7 +105,7 @@ final class Insertabot_Admin_Settings {
 
 		add_settings_field(
 			self::OPTION_BASE,
-			esc_html__( 'API Base URL', 'insertabot' ),
+			esc_html__( 'API Base URL', 'insertabot-ai-chatbot-solution' ),
 			array( __CLASS__, 'field_api_base' ),
 			self::PAGE_SLUG,
 			'insertabot_main_section'
@@ -136,7 +136,7 @@ final class Insertabot_Admin_Settings {
 			add_settings_error(
 				'insertabot_settings_messages',
 				'insertabot_invalid_key',
-				esc_html__('Invalid API key format.', 'insertabot'),
+				esc_html__('Invalid API key format.', 'insertabot-ai-chatbot-solution'),
 				'error'
 			);
 			return '';
@@ -149,7 +149,7 @@ final class Insertabot_Admin_Settings {
 				add_settings_error(
 					'insertabot_settings_messages',
 					'insertabot_store_failed',
-					esc_html__('Failed to securely store API key.', 'insertabot'),
+					esc_html__('Failed to securely store API key.', 'insertabot-ai-chatbot-solution'),
 					'error'
 				);
 				return '';
@@ -171,7 +171,7 @@ final class Insertabot_Admin_Settings {
 			add_settings_error(
 				'insertabot_settings_messages',
 				'insertabot_enabled_no_key',
-				esc_html__('API key required before enabling chatbot.', 'insertabot'),
+				esc_html__('API key required before enabling chatbot.', 'insertabot-ai-chatbot-solution'),
 				'error'
 			);
 			return false;
@@ -231,17 +231,17 @@ final class Insertabot_Admin_Settings {
 			<p class="description">
 				<?php if ($signup) : ?>
 					<a href="<?php echo esc_url($signup); ?>" target="_blank" rel="noopener noreferrer">
-						<strong><?php esc_html_e('Get a free API key →', 'insertabot'); ?></strong>
+						<strong><?php esc_html_e('Get a free API key →', 'insertabot-ai-chatbot-solution'); ?></strong>
 					</a>
 				<?php else : ?>
-					<strong><?php esc_html_e('Insertabot website URL not configured.', 'insertabot'); ?></strong>
+					<strong><?php esc_html_e('Insertabot website URL not configured.', 'insertabot-ai-chatbot-solution'); ?></strong>
 				<?php endif; ?>
 			</p>
 		<?php else : ?>
 			<p class="description">
-				<?php esc_html_e('API key connected.', 'insertabot'); ?> <code><?php echo esc_html($masked); ?></code>
+				<?php esc_html_e('API key connected.', 'insertabot-ai-chatbot-solution'); ?> <code><?php echo esc_html($masked); ?></code>
 				<?php if ($dash) : ?>
-					<a href="<?php echo esc_url($dash); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('View dashboard →', 'insertabot'); ?></a>
+					<a href="<?php echo esc_url($dash); ?>" target="_blank" rel="noopener noreferrer"><?php esc_html_e('View dashboard →', 'insertabot-ai-chatbot-solution'); ?></a>
 				<?php endif; ?>
 			</p>
 		<?php endif; ?>
@@ -265,8 +265,8 @@ final class Insertabot_Admin_Settings {
 		</label>
 		<p class="description">
 			<?php echo $has_key
-				? esc_html__('Toggle to show/hide the chatbot on the website.', 'insertabot')
-				: esc_html__('Enter API key above to enable the chatbot.', 'insertabot'); ?>
+				? esc_html__('Toggle to show/hide the chatbot on the website.', 'insertabot-ai-chatbot-solution')
+				: esc_html__('Enter API key above to enable the chatbot.', 'insertabot-ai-chatbot-solution'); ?>
 		</p>
 		<?php
 	}
@@ -282,13 +282,13 @@ final class Insertabot_Admin_Settings {
 			class="regular-text code"
 			placeholder="https://api.example.com"
 		/>
-		<p class="description"><?php esc_html_e('Advanced: Change only when using a custom API endpoint.', 'insertabot'); ?></p>
+		<p class="description"><?php esc_html_e('Advanced: Change only when using a custom API endpoint.', 'insertabot-ai-chatbot-solution'); ?></p>
 		<?php
 	}
 
 	public static function render_page(): void {
 		if (!current_user_can('manage_options')) {
-			wp_die(esc_html__('Insufficient permissions.', 'insertabot'));
+			wp_die(esc_html__('Insufficient permissions.', 'insertabot-ai-chatbot-solution'));
 		}
 
 		$api_key = self::get_api_key();
@@ -307,7 +307,7 @@ final class Insertabot_Admin_Settings {
 		<div class="wrap insertabot-admin-wrap">
 			<h1>
 				<span class="dashicons dashicons-format-chat" style="font-size: 32px; margin-inline-end: 8px; vertical-align: middle;"></span>
-				<?php echo esc_html__('Insertabot Settings', 'insertabot'); ?>
+				<?php echo esc_html__('Insertabot Settings', 'insertabot-ai-chatbot-solution'); ?>
 			</h1>
 
 			<?php settings_errors('insertabot_settings_messages'); ?>
@@ -363,7 +363,7 @@ final class Insertabot_Admin_Settings {
 
 					<div class="insertabot-welcome-image">
 						<?php if ($welcome_svg) : ?>
-							<img src="<?php echo esc_url($welcome_svg); ?>" alt="<?php echo esc_attr__('Insertabot', 'insertabot'); ?>" />
+							<img src="<?php echo esc_url($welcome_svg); ?>" alt="<?php echo esc_attr__('Insertabot', 'insertabot-ai-chatbot-solution'); ?>" />
 						<?php endif; ?>
 					</div>
 				</div>

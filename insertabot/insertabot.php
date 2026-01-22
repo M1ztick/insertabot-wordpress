@@ -8,7 +8,7 @@
  * Author URI: https://mistykmedia.com
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: insertabot
+ * Text Domain: insertabot-ai-chatbot-solution
  * Domain Path: /languages
  * Requires at least: 5.9
  * Requires PHP: 7.4
@@ -32,15 +32,7 @@ require_once INSERTABOT_PLUGIN_DIR . 'includes/admin-settings.php';
 require_once INSERTABOT_PLUGIN_DIR . 'includes/rest.php';
 require_once INSERTABOT_PLUGIN_DIR . 'includes/privacy.php';
 
-// Load translations
-add_action( 'plugins_loaded', 'insertabot_load_textdomain' );
 
-/**
- * Load plugin text domain for translations
- */
-function insertabot_load_textdomain() {
-    load_plugin_textdomain( 'insertabot', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' );
-}
 
 /**
  * Main Insertabot Plugin Class
@@ -153,7 +145,7 @@ class Insertabot_Plugin {
      * Add settings link on plugins page
      */
     public function add_settings_link($links) {
-        $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=insertabot-settings')) . '">' . esc_html__('Settings', 'insertabot') . '</a>';
+        $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=insertabot-settings')) . '">' . esc_html__('Settings', 'insertabot-ai-chatbot-solution') . '</a>';
         array_unshift($links, $settings_link);
         return $links;
     }
