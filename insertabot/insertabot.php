@@ -8,7 +8,7 @@
  * Author URI: https://mistykmedia.com
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain: insertabot-ai-chatbot-solution
+ * Text Domain: insertabot
  * Domain Path: /languages
  * Requires at least: 5.9
  * Requires PHP: 7.4
@@ -145,7 +145,7 @@ class Insertabot_Plugin {
      * Add settings link on plugins page
      */
     public function add_settings_link($links) {
-        $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=insertabot-settings')) . '">' . esc_html__('Settings', 'insertabot-ai-chatbot-solution') . '</a>';
+        $settings_link = '<a href="' . esc_url(admin_url('options-general.php?page=insertabot-settings')) . '">' . esc_html__('Settings', 'insertabot') . '</a>';
         array_unshift($links, $settings_link);
         return $links;
     }

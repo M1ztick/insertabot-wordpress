@@ -95,7 +95,6 @@ function insertabot_widget_token_endpoint( WP_REST_Request $request ) {
             )
         );
     } catch ( Exception $e ) {
-        error_log( 'Insertabot widget token generation error: ' . $e->getMessage() );
         return new WP_Error( 'token_error', 'Token generation failed', array( 'status' => 500 ) );
     }
 }

@@ -29,7 +29,6 @@ class Insertabot_Security {
         
         if (empty($salt)) {
             // Fallback if salts aren't defined (shouldn't happen in production)
-            error_log('Insertabot: WordPress security salts not defined. Using fallback.');
             $salt = 'insertabot_fallback_' . DB_NAME . DB_USER;
         }
         
@@ -62,7 +61,6 @@ class Insertabot_Security {
             );
             
             if ($encrypted === false) {
-                error_log('Insertabot: Encryption failed');
                 return false;
             }
             
@@ -70,7 +68,6 @@ class Insertabot_Security {
             return base64_encode($iv . $encrypted);
             
         } catch (Exception $e) {
-            error_log('Insertabot Encryption Error: ' . $e->getMessage());
             return false;
         }
     }
@@ -107,14 +104,12 @@ class Insertabot_Security {
             );
             
             if ($decrypted === false) {
-                error_log('Insertabot: Decryption failed');
                 return false;
             }
             
             return $decrypted;
             
         } catch (Exception $e) {
-            error_log('Insertabot Decryption Error: ' . $e->getMessage());
             return false;
         }
     }
@@ -170,7 +165,7 @@ class Insertabot_Security {
         if (!empty($api_key) && !preg_match('/^ib_sk_[a-zA-Z0-9_]{32,}$/', $api_key)) {
             return new WP_Error(
                 'invalid_api_key',
-                __('Invalid API key format. Key should start with "ib_sk_" followed by at least 32 characters.', 'insertabot-ai-chatbot-solution')
+                __('Invalid API key format. Key should start with "ib_sk_" followed by at least 32 characters.', 'insertabot')
             );
         }
         
@@ -236,11 +231,11 @@ class Insertabot_Security {
         $ip = '';
         
         if (!empty($_SERVER['HTTP_CLIENT_IP'])) {
-            $ip = $_SERVER['HTTP_CLIENT_IP'];
+            $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_CLIENT_IP']));
         } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-            $ip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+            $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
         } elseif (!empty($_SERVER['REMOTE_ADDR'])) {
-            $ip = $_SERVER['REMOTE_ADDR'];
+            $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
         }
         
         $ip = filter_var($ip, FILTER_VALIDATE_IP);
