@@ -158,7 +158,7 @@ export async function handleLogin(
       db
         .prepare(
           `SELECT customer_id, email, password_hash, password_salt, totp_enabled, totp_secret,
-				        backup_codes, failed_login_attempts, account_locked_until
+				        backup_codes, failed_login_attempts, account_locked_until, email_verified
 				 FROM customers WHERE email = ? AND status = 'active'`
         )
         .bind(request.email)
@@ -172,6 +172,7 @@ export async function handleLogin(
           backup_codes: string | null;
           failed_login_attempts: number;
           account_locked_until: number | null;
+          email_verified: number;
         }>(),
     "getCustomerForLogin"
   );
@@ -184,9 +185,7 @@ export async function handleLogin(
     );
   }
 
-  // Check if email is verified (optional - can be enforced or just warned)
-  // Uncomment to enforce email verification before login
-  /*
+  // Check if email is verified - enforce email verification before login
   if (customer.email_verified === 0) {
     throw new AppError(
       ErrorCode.INVALID_REQUEST,
@@ -194,7 +193,6 @@ export async function handleLogin(
       403
     );
   }
-  */
 
   // Check if account is locked
   const lockCheck = checkLoginAttempts(

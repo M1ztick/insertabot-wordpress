@@ -293,6 +293,15 @@ export function getSignupHTML(): string {
                     });
 
                     if (setPasswordResponse.ok) {
+                        // Send verification email
+                        await fetch('/api/auth/email/send-verification', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                email: data.email
+                            })
+                        }).catch(err => console.error('Verification email failed:', err));
+
                         // Auto-login after signup
                         const loginResponse = await fetch('/api/customer/login', {
                             method: 'POST',
