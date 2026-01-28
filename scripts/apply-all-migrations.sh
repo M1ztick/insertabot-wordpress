@@ -112,11 +112,8 @@ fi
 log_info "🚀 Applying migrations..."
 echo ""
 
-# List all migration files
-MIGRATIONS=(
-    "$MIGRATION_DIR/001_add_auth_fields.sql"
-    "$MIGRATION_DIR/002_add_email_verification.sql"
-)
+# Find all migration files, excluding rollback scripts, and sort them
+MIGRATIONS=($(find "$MIGRATION_DIR" -type f -name "*.sql" ! -name "*rollback*" | sort))
 
 for migration in "${MIGRATIONS[@]}"; do
     migration_name=$(basename "$migration")
