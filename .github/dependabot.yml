@@ -1,0 +1,58 @@
+# .github/dependabot.yml
+version: 2
+updates:
+  # Root level dependencies (widget)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      all-production:
+        dependency-type: "production"
+    labels:
+      - "dependencies"
+      - "widget"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    
+  # Worker dependencies (API/backend)
+  - package-ecosystem: "npm"
+    directory: "/worker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      all-production:
+        dependency-type: "production"
+    labels:
+      - "dependencies"
+      - "worker"
+      - "critical"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "github-actions"
