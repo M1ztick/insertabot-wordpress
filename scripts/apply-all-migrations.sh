@@ -66,7 +66,50 @@ else
     exit 1
 fi
 
-log_info "📋 Migrations to apply:"
+log_info "📋 Database setup steps:"
+echo ""
+echo "  1. Base schema (schema.sql)"
+echo "  2. Migration 001: Add auth fields"
+echo "  3. Migration 002: Add email verification"
+echo ""
+
+# First, check if base schema is needed
+log_info "🔍 Checking if base schema is already applied..."
+cd "$WORKER_DIR"
+
+# Try to query the customers table to see if it exists
+if wrangler d1 execute "$DB_NAME" --command="SELECT name FROM sqlite_master WHERE type='table' AND name='customers';" 2>&1 | grep -q "customers"; then
+    log_success "Base schema already exists"
+    APPLY_BASE_SCHEMA=false
+else
+    log_warning "Base schema NOT found - will apply schema.sql first"
+    APPLY_BASE_SCHEMA=true
+fi
+echo ""
+
+# Apply base schema if needed
+if [ "$APPLY_BASE_SCHEMA" = true ]; then
+    BASE_SCHEMA="$PROJECT_DIR/schema.sql"
+
+    if [ -f "$BASE_SCHEMA" ]; then
+        log_info "🚀 Applying base schema..."
+
+        if wrangler d1 execute "$DB_NAME" --file="$BASE_SCHEMA" 2>&1 | tee /tmp/schema_output.log; then
+            log_success "Base schema applied successfully"
+        else
+            log_error "Failed to apply base schema"
+            log_error "Cannot continue without base schema"
+            exit 1
+        fi
+        echo ""
+    else
+        log_error "Base schema file not found: $BASE_SCHEMA"
+        exit 1
+    fi
+fi
+
+# Now apply migrations
+log_info "🚀 Applying migrations..."
 echo ""
 
 # List all migration files
@@ -75,20 +118,6 @@ MIGRATIONS=(
     "$MIGRATION_DIR/002_add_email_verification.sql"
 )
 
-for migration in "${MIGRATIONS[@]}"; do
-    if [ -f "$migration" ]; then
-        echo "  • $(basename $migration)"
-    else
-        log_warning "Migration file not found: $migration"
-    fi
-done
-
-echo ""
-log_info "🚀 Applying migrations..."
-echo ""
-
-# Apply each migration
-cd "$WORKER_DIR"
 for migration in "${MIGRATIONS[@]}"; do
     migration_name=$(basename "$migration")
 
@@ -109,6 +138,8 @@ for migration in "${MIGRATIONS[@]}"; do
             log_warning "Continuing with remaining migrations..."
         fi
         echo ""
+    else
+        log_warning "Migration file not found: $migration"
     fi
 done
 
