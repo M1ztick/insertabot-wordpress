@@ -45,7 +45,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260103.0",
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
-    "husky": "^8.0.0",
+    "husky": "^9.1.7",
     "secretlint": "^11.2.5",
     "wrangler": "^4.47.0"
   }
