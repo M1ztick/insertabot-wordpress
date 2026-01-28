@@ -9,8 +9,10 @@
 set -e  # Exit on error
 
 ENVIRONMENT="${1:-production}"
-WORKER_DIR="worker"
-MIGRATION_DIR="worker/migrations"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+WORKER_DIR="$PROJECT_DIR/worker"
+MIGRATION_DIR="$PROJECT_DIR/worker/migrations"
 
 # Colors for output
 RED='\033[0;31m'
@@ -69,8 +71,8 @@ echo ""
 
 # List all migration files
 MIGRATIONS=(
-    "worker/migrations/001_add_auth_fields.sql"
-    "worker/migrations/002_add_email_verification.sql"
+    "$MIGRATION_DIR/001_add_auth_fields.sql"
+    "$MIGRATION_DIR/002_add_email_verification.sql"
 )
 
 for migration in "${MIGRATIONS[@]}"; do
@@ -90,10 +92,10 @@ cd "$WORKER_DIR"
 for migration in "${MIGRATIONS[@]}"; do
     migration_name=$(basename "$migration")
 
-    if [ -f "../$migration" ]; then
+    if [ -f "$migration" ]; then
         log_info "Applying: $migration_name"
 
-        if wrangler d1 execute "$DB_NAME" --file="../$migration" 2>&1 | tee /tmp/migration_output.log; then
+        if wrangler d1 execute "$DB_NAME" --file="$migration" 2>&1 | tee /tmp/migration_output.log; then
             # Check if it was already applied
             if grep -q "duplicate column name" /tmp/migration_output.log; then
                 log_warning "$migration_name: Already applied (columns exist)"
