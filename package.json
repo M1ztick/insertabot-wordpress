@@ -43,10 +43,10 @@
   "author": "Mistyk Media",
   "license": "GNU-v2",
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260103.0",
-    "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
+    "@cloudflare/workers-types": "^4.20260128.0",
+    "@secretlint/secretlint-rule-preset-recommend": "^11.3.1",
     "husky": "^8.0.0",
-    "secretlint": "^11.2.5",
-    "wrangler": "^4.47.0"
+    "secretlint": "^11.3.1",
+    "wrangler": "^4.61.0"
   }
 }
